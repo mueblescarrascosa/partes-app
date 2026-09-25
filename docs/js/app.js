@@ -20,6 +20,7 @@ async function cargarAjustes() {
     if (Array.isArray(a.ASEGURADORAS) && a.ASEGURADORAS.length) CFG.ASEGURADORAS = a.ASEGURADORAS;
     if (a.MENSAJE_CLIENTE) CFG.MENSAJE_CLIENTE = a.MENSAJE_CLIENTE;
     if (a.IVA != null && a.IVA !== "") CFG.IVA = Number(a.IVA);
+    if (a.WHATSAPP_APP) CFG.WHATSAPP_APP = a.WHATSAPP_APP;
     ajustesCargados = true;
   } catch { /* se usan los valores de config.js */ }
 }
@@ -347,6 +348,26 @@ function normalizar(d = {}) {
   const match = a && CFG.ASEGURADORAS.find((x) => sin(a).includes(sin(x)) || sin(x).includes(sin(a)));
   if (match && match !== "Otra") r.aseguradora = match;
   if (r.fecha_encargo && !/^\d{4}-\d{2}-\d{2}$/.test(r.fecha_encargo)) r.fecha_encargo = "";
+  // Números de referencia con puntos de miles (915.978.190 → 915978190)
+  for (const k of ["expediente", "num_encargo", "num_siniestro", "poliza"]) {
+    if (/^\d{1,3}(\.\d{3})+$/.test(r[k] || "")) r[k] = r[k].replace(/\./g, "");
+  }
+  for (const k of ["telefono", "telefono2", "tramitador_telefono"]) {
+    if (r[k] && /^[\d\s.\-+]+$/.test(r[k])) r[k] = r[k].replace(/[\s.\-]/g, "");
+  }
+  // Teléfono ilegible o tapado: busca teléfonos escritos en la descripción
+  const telOK = (t) => /^(\+?34)?[6-9]\d{8}$/.test(t || "");
+  const enTexto = [...new Set(((r.averia || "").match(/(?<!\d)[6-9](?:[\s.]?\d){8}(?!\d)/g) || [])
+    .map((t) => t.replace(/[\s.]/g, "")))]
+    .filter((t) => ![r.tramitador_telefono, CFG.DESTINO_INFORMES?.telefono, r.expediente, r.num_encargo, r.num_siniestro, r.poliza]
+      .some((x) => x && String(x).replace(/\D/g, "") === t));
+  if (!telOK(r.telefono)) {
+    if (enTexto.length) r.telefono = enTexto.shift();
+  } else {
+    const i = enTexto.indexOf(r.telefono.replace(/^\+?34/, ""));
+    if (i >= 0) enTexto.splice(i, 1);
+  }
+  if (!telOK(r.telefono2) && enTexto.length) r.telefono2 = enTexto.shift();
   return r;
 }
 
@@ -382,7 +403,11 @@ async function vistaFormulario(id) {
     </div>
     <div class="tarjeta">
       ${campo("nombre", "Nombre del asegurado", "text", 'autocomplete="off"')}
-      ${!id && S.borrador?.archivo ? '<p class="aviso-campo">⚠️ Comprueba el teléfono cifra a cifra con el papel.</p>' : ""}
+      ${!id && S.borrador?.archivo
+        ? (/^(\+?34)?[6-9]\d{8}$/.test(p.telefono || "")
+          ? '<p class="aviso-campo">⚠️ Comprueba el teléfono cifra a cifra con el papel.</p>'
+          : '<p class="aviso-campo">⚠️ No se ha podido leer un teléfono completo (9 cifras). Míralo en la descripción del trabajo o pídeselo al tramitador.</p>')
+        : ""}
       <div class="dos">${campo("telefono", "Teléfono", "tel")}${campo("telefono2", "Teléfono 2", "tel")}</div>
       ${campo("direccion", "Dirección")}
       <div class="tres">${campo("codigo_postal", "C.P.", "text", 'inputmode="numeric"')}${campo("poblacion", "Población")}${campo("provincia", "Provincia")}</div>
@@ -1112,6 +1137,10 @@ async function vistaAjustes() {
     </section>
     <section class="tarjeta">
       <h3>Mensaje de WhatsApp al cliente</h3>
+      <label>Abrir con (en Android)<select name="wa_app">
+        <option value="business" ${CFG.WHATSAPP_APP === "business" ? "selected" : ""}>WhatsApp Business</option>
+        <option value="normal" ${CFG.WHATSAPP_APP !== "business" ? "selected" : ""}>WhatsApp normal</option>
+      </select></label>
       <label>Texto<textarea name="mensaje" rows="4">${esc(CFG.MENSAJE_CLIENTE)}</textarea></label>
       <p class="suave">Puedes usar: {nombre} {empresa} {aseguradora} {expediente} {averia_corta}</p>
     </section>
@@ -1134,6 +1163,7 @@ async function vistaAjustes() {
       ASEGURADORAS: f.aseguradoras.split("\n").map((x) => x.trim()).filter(Boolean),
       MENSAJE_CLIENTE: f.mensaje.trim(),
       IVA: Number(f.iva) || 0,
+      WHATSAPP_APP: f.wa_app || "business",
     };
     if (!datos.ASEGURADORAS.includes("Otra")) datos.ASEGURADORAS.push("Otra");
     await conCarga("Guardando…", () => api.guardarAjustes(datos));
@@ -1234,6 +1264,12 @@ async function instalarApp() {
     <p><b>iPhone (Safari):</b> botón Compartir → <b>Añadir a pantalla de inicio</b>.</p>
     <button class="btn texto ancho" data-cerrar>Cerrar</button>`);
 }
+
+// Los enlaces "intent://" (WhatsApp Business en Android) se abren en la misma ventana
+document.addEventListener("click", (e) => {
+  const a = e.target.closest("a[href^='intent:']");
+  if (a) { e.preventDefault(); location.href = a.href; }
+});
 
 // Al volver a la app (otra pestaña, desbloquear el móvil…) se recargan los partes
 document.addEventListener("visibilitychange", () => {

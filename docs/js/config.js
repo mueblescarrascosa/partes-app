@@ -25,6 +25,9 @@ window.APP_CONFIG = {
   // Aseguradoras que salen en el selector (puedes añadir más)
   ASEGURADORAS: ["Mapfre", "Santalucía", "Iris Global", "Caser", "Allianz", "AXA", "Generali", "Reale", "Mutua Madrileña", "Otra"],
 
+  // App de WhatsApp en Android: "business" (WhatsApp Business) o "normal"
+  WHATSAPP_APP: "business",
+
   // Mensaje inicial al abrir WhatsApp con el cliente
   MENSAJE_CLIENTE: "Hola {nombre}, le escribo de {empresa} por el parte de {aseguradora} (exp. {expediente}) por {averia_corta}. ¿Cuándo le vendría bien que pasemos a verlo?",
 };

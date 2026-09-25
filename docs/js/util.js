@@ -34,8 +34,15 @@ export function telWhatsApp(t) {
   return d;
 }
 export const linkLlamar = (t) => `tel:${telLimpio(t)}`;
-export const linkWhatsApp = (t, texto = "") =>
-  `https://wa.me/${telWhatsApp(t)}${texto ? "?text=" + encodeURIComponent(texto) : ""}`;
+export function linkWhatsApp(t, texto = "") {
+  const num = telWhatsApp(t);
+  const web = `https://wa.me/${num}${texto ? "?text=" + encodeURIComponent(texto) : ""}`;
+  // En Android se puede forzar WhatsApp Business; si no está instalado, abre el enlace normal
+  if (window.APP_CONFIG?.WHATSAPP_APP === "business" && /Android/i.test(navigator.userAgent)) {
+    return `intent://send/?phone=${num}${texto ? "&text=" + encodeURIComponent(texto) : ""}#Intent;scheme=whatsapp;package=com.whatsapp.w4b;S.browser_fallback_url=${encodeURIComponent(web)};end`;
+  }
+  return web;
+}
 export const linkMapa = (p) =>
   `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent([p.direccion, p.codigo_postal, p.poblacion, p.provincia].filter(Boolean).join(", "))}`;
 
