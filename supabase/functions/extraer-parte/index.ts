@@ -1,7 +1,7 @@
 // Supabase Edge Function: extraer-parte
 // Recibe un PDF o una foto de un parte (base64) y devuelve los datos en JSON.
 // Proveedor de IA configurable con secretos:
-//   IA_PROVEEDOR = "anthropic" (por defecto) | "gemini"
+//   IA_PROVEEDOR = orden de prueba, por defecto "anthropic,gemini" (Claude y, si falla, Gemini)
 //   ANTHROPIC_API_KEY, ANTHROPIC_MODEL (opcional)
 //   GEMINI_API_KEY,    GEMINI_MODEL    (opcional)
 
@@ -122,9 +122,22 @@ Deno.serve(async (req) => {
     if (!permitidos.includes(mime)) return resp({ error: `Tipo no admitido: ${mime}` }, 400);
     if (data.length > 14_000_000) return resp({ error: "Archivo demasiado grande (máx. ~10 MB)" }, 413);
 
-    const proveedor = (Deno.env.get("IA_PROVEEDOR") ?? "anthropic").toLowerCase();
-    const datos = proveedor === "gemini" ? await conGemini({ data, mime }) : await conAnthropic({ data, mime });
-    return resp({ datos, proveedor });
+    // Orden de prueba: Claude primero y Gemini de respaldo (configurable con IA_PROVEEDOR="gemini,anthropic")
+    const orden = (Deno.env.get("IA_PROVEEDOR") ?? "anthropic,gemini").toLowerCase().split(",").map((x) => x.trim());
+    const disponibles = orden.filter((p) =>
+      (p === "anthropic" && Deno.env.get("ANTHROPIC_API_KEY")) || (p === "gemini" && Deno.env.get("GEMINI_API_KEY")));
+    if (!disponibles.length) return resp({ error: "No hay ninguna clave de IA configurada (ANTHROPIC_API_KEY o GEMINI_API_KEY)" }, 500);
+    const fallos: string[] = [];
+    for (const proveedor of disponibles) {
+      try {
+        const datos = proveedor === "gemini" ? await conGemini({ data, mime }) : await conAnthropic({ data, mime });
+        return resp({ datos, proveedor });
+      } catch (e) {
+        console.error(proveedor, e);
+        fallos.push(`${proveedor}: ${(e as Error).message}`);
+      }
+    }
+    return resp({ error: fallos.join(" | ") }, 502);
   } catch (e) {
     console.error(e);
     return resp({ error: String((e as Error).message ?? e) }, 500);
