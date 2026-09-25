@@ -19,15 +19,16 @@ Extrae los datos del documento y responde ÚNICAMENTE con un objeto JSON, sin te
 
 {
   "aseguradora": "nombre de la compañía (p.ej. Mapfre, Santalucía, Iris Global, Caser). Si el parte viene de una gestora/plataforma de asistencia, pon esa.",
-  "expediente": "número de expediente / siniestro / encargo / servicio",
-  "poliza": "número de póliza",
+  "expediente": "número de EXPEDIENTE o SINIESTRO de la compañía (en Iris Global es el campo 'Nº EXPEDIENTE IRIS', p.ej. IM26138511)",
+  "num_encargo": "número de ENCARGO / servicio / orden de trabajo, si es distinto del expediente (en Iris Global el 'Nº' bajo 'ENCARGO DE TRABAJO')",
+  "poliza": "número de póliza (solo si aparece un número de póliza real; nombres de producto o convenio como 'INTEGRAL KBS' NO son póliza)",
   "fecha_encargo": "fecha del encargo en formato AAAA-MM-DD",
   "nombre": "nombre y apellidos del asegurado o persona de contacto",
   "direccion": "calle, número, piso y puerta del riesgo",
   "codigo_postal": "",
   "poblacion": "",
   "provincia": "",
-  "telefono": "teléfono principal de contacto del asegurado (solo dígitos, con prefijo +34 si aparece)",
+  "telefono": "teléfono principal de contacto del asegurado (9 cifras)",
   "telefono2": "otro teléfono del asegurado si hay",
   "averia": "descripción clara del daño o avería y del trabajo encargado (causa, estancia afectada, gremio)",
   "tramitador_nombre": "nombre del tramitador/gestor de la compañía",
@@ -35,7 +36,13 @@ Extrae los datos del documento y responde ÚNICAMENTE con un objeto JSON, sin te
   "tramitador_email": "email del tramitador"
 }
 
-Reglas: usa null en lo que no aparezca; no inventes datos; no confundas el teléfono de la compañía con el del asegurado.`;
+Reglas:
+- Usa null en lo que no aparezca. No inventes datos.
+- Los datos del "Profesional" o "Reparador" (código profesional, domicilio y CIF del taller) son de la empresa que recibe el encargo, NO del asegurado: ignóralos.
+- El "Gestor" o "Tramitador" es la persona de la compañía que lleva el expediente.
+- No confundas el teléfono de la compañía con el del asegurado.
+- TELÉFONOS: son críticos. Léelos cifra a cifra, fijándote bien en dígitos parecidos (4/6/9, 1/7, 3/8, 5/6). Un móvil español tiene 9 cifras y empieza por 6 o 7; un fijo, por 8 o 9. Devuelve solo las 9 cifras, sin espacios ni prefijo.
+- Fechas en formato AAAA-MM-DD; en España las fechas del documento van como DD/MM/AAAA.`;
 
 type Entrada = { data: string; mime: string };
 
@@ -49,27 +56,37 @@ function limpiarJSON(txt: string) {
 async function conAnthropic({ data, mime }: Entrada) {
   const key = Deno.env.get("ANTHROPIC_API_KEY");
   if (!key) throw new Error("Falta el secreto ANTHROPIC_API_KEY");
-  const model = Deno.env.get("ANTHROPIC_MODEL") ?? "claude-haiku-4-5";
+  const modelos = (Deno.env.get("ANTHROPIC_MODEL") ?? "claude-sonnet-4-5,claude-haiku-4-5").split(",").map((m) => m.trim());
   const bloque = mime === "application/pdf"
     ? { type: "document", source: { type: "base64", media_type: mime, data } }
     : { type: "image", source: { type: "base64", media_type: mime, data } };
-  const r = await fetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "x-api-key": key,
-      "anthropic-version": "2023-06-01",
-      "content-type": "application/json",
-    },
-    body: JSON.stringify({
-      model,
-      max_tokens: 1500,
-      messages: [{ role: "user", content: [bloque, { type: "text", text: PROMPT }] }],
-    }),
-  });
-  const j = await r.json();
-  if (!r.ok) throw new Error(`Anthropic ${r.status}: ${j?.error?.message ?? JSON.stringify(j)}`);
-  const texto = (j.content ?? []).filter((c: any) => c.type === "text").map((c: any) => c.text).join("");
-  return limpiarJSON(texto);
+  let ultimoError = "";
+  for (const model of modelos) {
+    const r = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "x-api-key": key,
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        model,
+        max_tokens: 1500,
+        temperature: 0,
+        messages: [{ role: "user", content: [bloque, { type: "text", text: PROMPT }] }],
+      }),
+    });
+    const j = await r.json();
+    if (!r.ok) {
+      ultimoError = `Anthropic ${model} ${r.status}: ${j?.error?.message ?? JSON.stringify(j)}`;
+      // Si el modelo no existe o no está disponible, probamos el siguiente
+      if ([400, 403, 404].includes(r.status) && /model/i.test(ultimoError)) continue;
+      throw new Error(ultimoError);
+    }
+    const texto = (j.content ?? []).filter((c: any) => c.type === "text").map((c: any) => c.text).join("");
+    return limpiarJSON(texto);
+  }
+  throw new Error(ultimoError || "Ningún modelo de Claude disponible");
 }
 
 async function conGemini({ data, mime }: Entrada) {
