@@ -171,3 +171,5 @@ label.btn.grande { display: flex; }
 .toast.error { background: var(--err); }
 
 .aviso-campo { margin: 0; font-size: 13px; color: #b45309; font-weight: 600; }
+.oculto { display: none !important; }
+.barra .btn.instalar { background: #2563eb; color: #fff; border: 0; min-height: 34px; padding: 4px 12px; font-size: 14px; }
