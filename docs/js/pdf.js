@@ -56,6 +56,7 @@ export async function generarInforme(parte, api, miembros = []) {
   fila("Aseguradora", parte.aseguradora);
   fila("Nº expediente", parte.expediente);
   fila("Nº encargo", parte.num_encargo);
+  fila("Nº siniestro", parte.num_siniestro);
   fila("Póliza", parte.poliza);
   fila("Fecha encargo", fFecha(parte.fecha_encargo));
   fila("Tramitador", [parte.tramitador_nombre, parte.tramitador_telefono, parte.tramitador_email].filter(Boolean).join(" · "));

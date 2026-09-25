@@ -155,7 +155,7 @@ function pintarLista() {
   let base = S.partes;
   if (S.soloMios) base = base.filter((p) => p.asignado_a === S.yo.user_id);
   if (q) base = base.filter((p) =>
-    [p.nombre, p.expediente, p.num_encargo, p.direccion, p.poblacion, p.telefono, p.aseguradora, p.averia, p.poliza]
+    [p.nombre, p.expediente, p.num_encargo, p.num_siniestro, p.direccion, p.poblacion, p.telefono, p.aseguradora, p.averia, p.poliza]
       .some((v) => String(v ?? "").toLowerCase().includes(q)));
 
   const cuenta = (id) => base.filter((p) => p.estado === id).length;
@@ -229,7 +229,7 @@ function menuUsuario() {
 }
 
 function exportarCSV() {
-  const cols = ["aseguradora", "expediente", "num_encargo", "poliza", "estado", "nombre", "telefono", "direccion", "codigo_postal", "poblacion", "averia", "importe_valorado", "importe_autorizado", "fecha_cita", "created_at", "updated_at"];
+  const cols = ["aseguradora", "expediente", "num_encargo", "num_siniestro", "poliza", "estado", "nombre", "telefono", "direccion", "codigo_postal", "poblacion", "averia", "importe_valorado", "importe_autorizado", "fecha_cita", "created_at", "updated_at"];
   const q = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
   const csv = "﻿" + [cols.join(";"), ...S.partes.map((p) => cols.map((c) => q(p[c])).join(";"))].join("\n");
   descargar(new Blob([csv], { type: "text/csv" }), `partes_${new Date().toISOString().slice(0, 10)}.csv`);
@@ -319,7 +319,8 @@ async function vistaFormulario(id) {
         </select>
       </label>
       <div class="dos">${campo("expediente", "Nº expediente")}${campo("num_encargo", "Nº encargo")}</div>
-      <div class="dos">${campo("poliza", "Póliza")}${campo("fecha_encargo", "Fecha de encargo", "date")}</div>
+      <div class="dos">${campo("num_siniestro", "Nº siniestro")}${campo("poliza", "Póliza")}</div>
+      ${campo("fecha_encargo", "Fecha de encargo", "date")}
     </div>
     <div class="tarjeta">
       ${campo("nombre", "Nombre del asegurado", "text", 'autocomplete="off"')}
@@ -437,6 +438,7 @@ async function vistaParte(id) {
   <section class="tarjeta datos">
     <h3>Datos</h3>
     ${dato("Nº encargo", p.num_encargo)}
+    ${dato("Nº siniestro", p.num_siniestro)}
     ${dato("Póliza", p.poliza)}
     ${dato("Fecha encargo", fFecha(p.fecha_encargo))}
     ${dato("Cita", fFechaHora(p.fecha_cita))}
