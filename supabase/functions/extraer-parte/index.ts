@@ -40,7 +40,7 @@ Extrae los datos del documento y responde ÚNICAMENTE con un objeto JSON, sin te
 Formatos conocidos:
 - IRIS GLOBAL: cabecera con logo "IRIS GLOBAL". expediente = "Nº EXPEDIENTE IRIS" (tipo IM26138511); num_encargo = "Nº" de "ENCARGO DE TRABAJO"; gestor = campo "GESTOR".
 - SANTALUCÍA: empieza con "Según instrucciones de nuestro Asegurado, le efectuamos el encargo..." y tiene los campos "Nº SINIESTRO (NES)", "RAMO", "MODALIDAD", "CENTRO TRAMITADOR" y "REF.EMPRESA ASIST.". Aunque no aparezca el nombre, es Santalucía. expediente = "REF.EMPRESA ASIST." (p.ej. 916236817); num_siniestro = "Nº SINIESTRO (NES)"; num_encargo = "Nº" de "ENCARGO DE TRABAJO"; poliza = "PÓLIZA"; el "GESTOR" suele ser un código numérico: ponlo en tramitador_nombre.
-- MAPFRE: suele traer el logo o el nombre MAPFRE; expediente = número de expediente/siniestro de Mapfre.
+- MAPFRE: cabecera "MAPFRE ESPAÑA, S.A. / Parte de Trabajo <GREMIO>". expediente = "Nº de Expediente" (tipo V73739261, también aparece al final de "Referencia"); poliza = "Nº Póliza"; fecha_encargo = "Fecha" de la cabecera; tramitador_nombre = "Tramitador del Expediente"; telefono = "Teléfonos de contacto". En averia empieza por el gremio del título (p.ej. "CERRADURAS: ...") y usa la "Descripción del expediente" si aparece; el texto "CLIENTE PLATINO / atención prioritaria..." resúmelo como "Cliente platino: contactar en menos de 12 h".
 
 Reglas:
 - Usa null en lo que no aparezca. No inventes datos.
