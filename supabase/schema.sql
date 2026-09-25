@@ -187,3 +187,6 @@ drop policy if exists ajustes_admin_ins on public.ajustes;
 create policy ajustes_admin_ins on public.ajustes for insert to authenticated with check (public.es_admin());
 drop policy if exists ajustes_admin_upd on public.ajustes;
 create policy ajustes_admin_upd on public.ajustes for update to authenticated using (public.es_admin()) with check (public.es_admin());
+
+-- ---------- Papelera ----------
+alter table public.partes add column if not exists borrado_at timestamptz;
