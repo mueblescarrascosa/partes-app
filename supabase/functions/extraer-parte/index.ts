@@ -59,7 +59,7 @@ Reglas:
 - TELÉFONO TAPADO O ILEGIBLE: a veces el campo de teléfono está tachado, tapado con bolígrafo, cortado o borroso. Busca SIEMPRE teléfonos también en el texto libre ("DESCRIPCIÓN DE LOS TRABAJOS A REALIZAR", "Observaciones", notas: "Tlf 615954724 Teresa (esposa)"). Si el del campo no se lee entero, usa el del texto (comprueba que encaja con las cifras que sí se ven). Si el del campo se lee bien y en el texto hay otro distinto, ponlo en telefono2. NUNCA devuelvas un teléfono incompleto ni con cifras inventadas: si no tienes las 9 cifras seguras, null. En averia conserva la persona de contacto si aparece (p.ej. "Contacto: Teresa (esposa)").
 - CÓDIGO POSTAL tapado en parte: complétalo solo si la provincia deja claras las cifras que faltan (Jaén empieza por 23, p.ej. "?3006" en Jaén = 23006); si no, null.
 - NÚMEROS DE REFERENCIA (expediente, siniestro, encargo, póliza): cópialos cifra a cifra, sin saltarte ni repetir ninguna. Cuenta las cifras antes de responder.
-- Fechas en formato AAAA-MM-DD; en España las fechas del documento van como DD/MM/AAAA.`;
+- Fechas en formato AAAA-MM-DD; en España las fechas del documento van como DD/MM/AAAA. Copia el día cifra a cifra tal como está escrito; no uses la fecha de hoy ni la calcules.`;
 
 type Entrada = { data: string; mime: string };
 
@@ -97,7 +97,7 @@ async function conAnthropic({ data, mime }: Entrada) {
     if (!r.ok) {
       ultimoError = `Anthropic ${model} ${r.status}: ${j?.error?.message ?? JSON.stringify(j)}`;
       // Si el modelo no existe o no está disponible, probamos el siguiente
-      if ([400, 403, 404].includes(r.status) && /model/i.test(ultimoError)) continue;
+      if (([400, 403, 404].includes(r.status) && /model/i.test(ultimoError)) || [429, 500, 529].includes(r.status)) continue;
       throw new Error(ultimoError);
     }
     const texto = (j.content ?? []).filter((c: any) => c.type === "text").map((c: any) => c.text).join("");
@@ -126,7 +126,7 @@ async function conGemini({ data, mime }: Entrada) {
     const j = await r.json();
     if (!r.ok) {
       ultimoError = `Gemini ${model} ${r.status}: ${j?.error?.message ?? JSON.stringify(j)}`;
-      if (r.status === 404 || r.status === 400) continue;
+      if ([400, 404, 429, 500, 503].includes(r.status)) continue; // modelo no disponible o saturado: probamos el siguiente
       throw new Error(ultimoError);
     }
     const texto = j.candidates?.[0]?.content?.parts?.map((p: any) => p.text ?? "").join("") ?? "";
