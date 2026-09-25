@@ -11,8 +11,8 @@ window.APP_CONFIG = {
   EMPRESA: {
     nombre: "Muebles Carrascosa SL",
     cif: "B23237522",
-    telefono: "",
-    email: "",
+    telefono: "653 451 270",
+    email: "carrascosamuebles@gmail.com",
     direccion: "C/ Fuenclara, 72 · 23330 Villanueva del Arzobispo",
   },
 
