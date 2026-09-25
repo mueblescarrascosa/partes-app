@@ -169,3 +169,5 @@ label.btn.grande { display: flex; }
 .toast.show { opacity: 1; transform: translate(-50%, 0); }
 .toast.ok { background: var(--ok); }
 .toast.error { background: var(--err); }
+
+.aviso-campo { margin: 0; font-size: 13px; color: #b45309; font-weight: 600; }
