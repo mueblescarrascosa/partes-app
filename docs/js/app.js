@@ -124,6 +124,7 @@ async function vistaLista() {
   <header class="barra">
     <h1>Partes</h1>
     <div class="barra-acc">
+      ${yaInstalada() ? "" : `<button class="btn peq instalar ${avisoInstalar ? "" : "oculto"}" id="btnInstalar">Instalar app</button>`}
       <button class="icono" id="recargar" aria-label="Recargar">${I.refresh}</button>
       <button class="icono" id="menuUsuario" aria-label="Usuario">${I.user}</button>
     </div>
@@ -142,6 +143,7 @@ async function vistaLista() {
   $("#nuevo").addEventListener("click", menuNuevo);
   $("#recargar").addEventListener("click", cargarPartes);
   $("#menuUsuario").addEventListener("click", menuUsuario);
+  $("#btnInstalar")?.addEventListener("click", instalarApp);
   await cargarPartes();
 }
 
@@ -214,12 +216,14 @@ function menuUsuario() {
     <p class="suave">${esc(S.yo?.email || "")}</p>
     <div class="lista-botones">
       ${api.modo === "supabase" ? '<button class="btn ancho" id="cambiarPw">Cambiar contraseña</button>' : ""}
+      ${yaInstalada() ? "" : '<button class="btn ancho" id="instalarMenu">Instalar como app</button>'}
       <button class="btn ancho" id="exportar">Exportar partes (CSV)</button>
       ${api.modo === "supabase" ? '<button class="btn ancho peligro" id="salir">Cerrar sesión</button>' : ""}
       <button class="btn texto ancho" data-cerrar>Cerrar</button>
     </div>`);
   $("#salir", s)?.addEventListener("click", async () => { await api.salir(); S.yo = null; cerrarSheet(); router(); });
   $("#exportar", s).addEventListener("click", exportarCSV);
+  $("#instalarMenu", s)?.addEventListener("click", instalarApp);
   $("#cambiarPw", s)?.addEventListener("click", async () => {
     const pw = prompt("Nueva contraseña (mínimo 8 caracteres)");
     if (!pw) return;
@@ -690,6 +694,23 @@ async function flujoInforme(pIn) {
     catch (e) { if (e.name !== "AbortError") toast("No se pudo compartir: " + e.message, "error"); }
   });
   $("#descargar", s).onclick = () => descargar(blob, nombre);
+}
+
+// ------------------------------------------------------------------ Instalar como app
+let avisoInstalar = null;
+const yaInstalada = () => matchMedia("(display-mode: standalone)").matches || navigator.standalone;
+window.addEventListener("beforeinstallprompt", (e) => {
+  e.preventDefault(); avisoInstalar = e;
+  $("#btnInstalar")?.classList.remove("oculto");
+});
+window.addEventListener("appinstalled", () => { avisoInstalar = null; toast("App instalada", "ok"); $("#btnInstalar")?.classList.add("oculto"); });
+async function instalarApp() {
+  if (avisoInstalar) { avisoInstalar.prompt(); await avisoInstalar.userChoice; avisoInstalar = null; $("#btnInstalar")?.classList.add("oculto"); return; }
+  abrirSheet(`<h2>Instalar la app</h2>
+    <p><b>Android (Chrome):</b> menú ⋮ → <b>Añadir a pantalla de inicio</b> → Instalar.</p>
+    <p><b>Windows (Chrome):</b> icono de instalar (📥) a la derecha de la barra de direcciones, o menú ⋮ → <b>Enviar, guardar y compartir → Instalar página como app</b>.</p>
+    <p><b>iPhone (Safari):</b> botón Compartir → <b>Añadir a pantalla de inicio</b>.</p>
+    <button class="btn texto ancho" data-cerrar>Cerrar</button>`);
 }
 
 // ------------------------------------------------------------------ Arranque
