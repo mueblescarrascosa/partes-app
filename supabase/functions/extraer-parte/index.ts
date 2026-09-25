@@ -40,6 +40,14 @@ Extrae los datos del documento y responde ÚNICAMENTE con un objeto JSON, sin te
 Formatos conocidos:
 - IRIS GLOBAL: cabecera con logo "IRIS GLOBAL". expediente = "Nº EXPEDIENTE IRIS" (tipo IM26138511); num_encargo = "Nº" de "ENCARGO DE TRABAJO"; gestor = campo "GESTOR".
 - SANTALUCÍA: empieza con "Según instrucciones de nuestro Asegurado, le efectuamos el encargo..." y tiene los campos "Nº SINIESTRO (NES)", "RAMO", "MODALIDAD", "CENTRO TRAMITADOR" y "REF.EMPRESA ASIST.". Aunque no aparezca el nombre, es Santalucía. expediente = "REF.EMPRESA ASIST." (p.ej. 916236817); num_siniestro = "Nº SINIESTRO (NES)"; num_encargo = "Nº" de "ENCARGO DE TRABAJO"; poliza = "PÓLIZA"; el "GESTOR" suele ser un código numérico: ponlo en tramitador_nombre.
+- SANTALUCÍA (pantalla "Buzón Profesional"): suele ser una FOTO HECHA A LA PANTALLA de un ordenador (puede estar inclinada, con reflejos o con la barra del navegador arriba; ignora la barra de marcadores). Tiene pestañas (Encargos, Notas, Agenda...), un "Buscador", una tabla con columnas Compañía / T. Trabajo / NºExp / NºEnc / Act / Domicilio / Código Postal - Población / F.Entrada / Días, y abajo "Detalle de Encargos Profesional" con Ramo, Número de póliza, Tipo Encargo, Causa siniestro, Número de expediente, Fecha Ocurrencia, Fecha Inicio, Gestor, Nombre, N.I.F. y Teléfono. Es Santalucía (logo "santalucia" en la columna Compañía). Reglas:
+  · IGNORA por completo el bloque "Buscador" (son filtros de búsqueda, no datos del parte).
+  · Si la tabla tiene varias filas, usa la fila cuyo NºExp coincide con el "Número de expediente" del Detalle.
+  · expediente = "Número de expediente" del Detalle (la tabla suele cortar la última cifra); num_encargo = "NºEnc"; poliza = "Número de póliza". Quita los puntos de miles: "915.978.190" → "915978190".
+  · nombre = "Nombre"; telefono = "Teléfono" del Detalle. El "Gestor" (p.ej. 9.650.043) es un código, NO un teléfono: ponlo sin puntos en tramitador_nombre como "Gestor 9650043". El N.I.F. no se usa.
+  · direccion = columna "Domicilio" (puede venir cortada; cópiala tal cual); poblacion = "Código Postal - Población" (si solo hay población, codigo_postal = null).
+  · fecha_encargo = "F.Entrada" de la tabla (solo la fecha). NO uses "Fecha Ocurrencia" ni "Fecha Inicio".
+  · averia = gremio de la columna "Act" + "Tipo Encargo" + "Causa siniestro", p.ej. "Carpintería de madera – Fenómenos atmosféricos (lluvia). Ramo: Combinado del Hogar. Fecha ocurrencia 17/02/2026". Añade el texto de la nota si hay alguno relevante sobre el daño.
 - MAPFRE: cabecera "MAPFRE ESPAÑA, S.A. / Parte de Trabajo <GREMIO>". expediente = "Nº de Expediente" (tipo V73739261, también aparece al final de "Referencia"); poliza = "Nº Póliza"; fecha_encargo = "Fecha" de la cabecera; tramitador_nombre = "Tramitador del Expediente"; telefono = "Teléfonos de contacto". En averia empieza por el gremio del título (p.ej. "CERRADURAS: ...") y usa la "Descripción del expediente" si aparece; el texto "CLIENTE PLATINO / atención prioritaria..." resúmelo como "Cliente platino: contactar en menos de 12 h".
 
 Reglas:
@@ -48,6 +56,8 @@ Reglas:
 - El "Gestor" o "Tramitador" es la persona de la compañía que lleva el expediente.
 - No confundas el teléfono de la compañía con el del asegurado.
 - TELÉFONOS: son críticos. Léelos cifra a cifra, fijándote bien en dígitos parecidos (4/6/9, 1/7, 3/8, 5/6). Un móvil español tiene 9 cifras y empieza por 6 o 7; un fijo, por 8 o 9. Devuelve solo las 9 cifras, sin espacios ni prefijo.
+- TELÉFONO TAPADO O ILEGIBLE: a veces el campo de teléfono está tachado, tapado con bolígrafo, cortado o borroso. Busca SIEMPRE teléfonos también en el texto libre ("DESCRIPCIÓN DE LOS TRABAJOS A REALIZAR", "Observaciones", notas: "Tlf 615954724 Teresa (esposa)"). Si el del campo no se lee entero, usa el del texto (comprueba que encaja con las cifras que sí se ven). Si el del campo se lee bien y en el texto hay otro distinto, ponlo en telefono2. NUNCA devuelvas un teléfono incompleto ni con cifras inventadas: si no tienes las 9 cifras seguras, null. En averia conserva la persona de contacto si aparece (p.ej. "Contacto: Teresa (esposa)").
+- CÓDIGO POSTAL tapado en parte: complétalo solo si la provincia deja claras las cifras que faltan (Jaén empieza por 23, p.ej. "?3006" en Jaén = 23006); si no, null.
 - NÚMEROS DE REFERENCIA (expediente, siniestro, encargo, póliza): cópialos cifra a cifra, sin saltarte ni repetir ninguna. Cuenta las cifras antes de responder.
 - Fechas en formato AAAA-MM-DD; en España las fechas del documento van como DD/MM/AAAA.`;
 
