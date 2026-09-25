@@ -6,6 +6,7 @@ import {
 import { generarInforme } from "./pdf.js";
 
 const CFG = window.APP_CONFIG;
+const DEST = CFG.DESTINO_INFORMES || { nombre: "tramitador", telefono: "" };
 const app = $("#app");
 const S = {
   yo: null, miembros: [], partes: [],
@@ -425,7 +426,7 @@ async function vistaParte(id) {
     <div class="estado-actual" style="--c:${e.color}">Estado: <b>${e.nombre}</b>${p.fecha_cita && idx < 2 ? ` · Cita ${fFechaHora(p.fecha_cita)}` : ""}</div>
     <div class="lista-botones">
       ${sig ? `<button class="btn primario ancho" id="avanzar" style="--c:${sig.color}">Marcar como ${sig.nombre.toLowerCase()} →</button>` : ""}
-      ${p.estado === "realizado" ? `<button class="btn primario ancho" id="informe" style="--c:#16a34a">${I.pdf} Generar PDF y enviar al tramitador</button>` : ""}
+      ${idx >= idxEstado("visitado") ? `<button class="btn primario ancho" id="informe" style="--c:#16a34a">${I.pdf} PDF de ${p.estado === "realizado" ? "trabajo terminado" : "visita"} → ${esc(DEST.nombre)}</button>` : ""}
       <button class="btn ancho" id="nota">Añadir nota</button>
     </div>
   </section>
@@ -645,7 +646,7 @@ function sheetFase(p, destino) {
       });
       toast(destino ? `Marcado como ${info.nombre.toLowerCase()}` : "Nota añadida", "ok");
       await vistaParte(p.id);
-      if (destino === "realizado") {
+      if (destino === "realizado" || destino === "visitado") {
         const nuevo = await api.obtenerParte(p.id);
         flujoInforme(nuevo);
       }
@@ -670,14 +671,16 @@ async function flujoInforme(pIn) {
 
   const file = new File([blob], nombre, { type: "application/pdf" });
   const puedeCompartir = !!(navigator.canShare && navigator.canShare({ files: [file] }));
-  const texto = `Informe del expediente ${p.expediente || ""} (${p.aseguradora}) - ${p.nombre || ""}. Trabajo realizado.`;
-  const tel = p.tramitador_telefono;
+  const tipoInf = p.estado === "realizado" ? "Trabajo terminado" : "Visita realizada";
+  const texto = `${tipoInf} - ${p.aseguradora} exp. ${p.expediente || ""}${p.num_encargo ? " (encargo " + p.num_encargo + ")" : ""} - ${p.nombre || ""}.`;
+  const tel = DEST.telefono || p.tramitador_telefono;
+  const quien = DEST.telefono ? DEST.nombre : "el tramitador";
   const s = abrirSheet(`
     <h2>PDF listo</h2>
     <p class="suave">${esc(nombre)}</p>
     <div class="lista-botones">
-      ${puedeCompartir ? `<button class="btn primario grande" id="compartir" style="--c:#16a34a">${I.wa}<span><b>Enviar PDF por WhatsApp</b><small>Elige WhatsApp y luego al tramitador${p.tramitador_nombre ? " (" + esc(p.tramitador_nombre) + ")" : ""}</small></span></button>` : ""}
-      ${tel ? `<a class="btn grande" id="waEnlace" target="_blank" rel="noopener" href="${linkWhatsApp(tel, texto + (enlace ? "\n" + enlace : ""))}">${I.wa}<span><b>WhatsApp directo al tramitador</b><small>${enlace ? "Mensaje con enlace al PDF (válido 30 días)" : "Abre el chat; adjunta el PDF descargado"}</small></span></a>` : ""}
+      ${puedeCompartir ? `<button class="btn primario grande" id="compartir" style="--c:#16a34a">${I.wa}<span><b>Enviar PDF por WhatsApp</b><small>Elige WhatsApp y luego a ${esc(quien)}</small></span></button>` : ""}
+      ${tel ? `<a class="btn grande" id="waEnlace" target="_blank" rel="noopener" href="${linkWhatsApp(tel, texto + (enlace ? "\n" + enlace : ""))}">${I.wa}<span><b>WhatsApp directo a ${esc(quien)}</b><small>${enlace ? "Mensaje con enlace al PDF (válido 30 días)" : "Abre el chat; adjunta el PDF descargado"}</small></span></a>` : ""}
       <button class="btn grande" id="descargar">${I.pdf}<span><b>Descargar / ver PDF</b></span></button>
       <button class="btn texto ancho" data-cerrar>Cerrar</button>
     </div>

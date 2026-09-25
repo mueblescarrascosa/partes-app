@@ -16,6 +16,9 @@ window.APP_CONFIG = {
     direccion: "C/ Fuenclara, 72 · 23330 Villanueva del Arzobispo",
   },
 
+  // A quién se envían los PDF de visita y de trabajo terminado
+  DESTINO_INFORMES: { nombre: "MULTIBETT", telefono: "680412264" },
+
   // Aseguradoras que salen en el selector (puedes añadir más)
   ASEGURADORAS: ["Mapfre", "Santalucía", "Iris Global", "Caser", "Allianz", "AXA", "Generali", "Reale", "Mutua Madrileña", "Otra"],
 

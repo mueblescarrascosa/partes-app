@@ -22,7 +22,8 @@ export async function generarInforme(parte, api, miembros = []) {
   const contacto = [E.cif && `CIF ${E.cif}`, E.telefono, E.email, E.direccion].filter(Boolean).join("  ·  ");
   if (contacto) doc.text(contacto, M, 19);
   doc.setFont("helvetica", "bold"); doc.setFontSize(10);
-  doc.text("INFORME DE TRABAJO REALIZADO", W - M, 13, { align: "right" });
+  const esFinal = parte.estado === "realizado";
+  doc.text(esFinal ? "INFORME DE TRABAJO REALIZADO" : "INFORME DE VISITA", W - M, 13, { align: "right" });
   doc.setFont("helvetica", "normal"); doc.setFontSize(8.5);
   doc.text(`Fecha: ${fFecha(new Date())}`, W - M, 19, { align: "right" });
   doc.setTextColor(20);
@@ -162,6 +163,6 @@ export async function generarInforme(parte, api, miembros = []) {
     doc.text(`Página ${i} de ${n}`, W - M, ALTO - 8, { align: "right" });
   }
 
-  const nombreArchivo = `Informe_${(parte.aseguradora || "parte").replace(/\s+/g, "")}_${(parte.expediente || parte.id.slice(0, 8)).replace(/[^\w-]/g, "")}.pdf`;
+  const nombreArchivo = `${esFinal ? "Terminado" : "Visita"}_${(parte.aseguradora || "parte").replace(/\s+/g, "")}_${(parte.expediente || parte.id.slice(0, 8)).replace(/[^\w-]/g, "")}.pdf`;
   return { blob: doc.output("blob"), nombre: nombreArchivo };
 }
