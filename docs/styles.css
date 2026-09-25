@@ -208,3 +208,28 @@ h4.cat { margin: 14px 4px 2px; font-size: 12px; text-transform: uppercase; color
 .lineas-mini > div > span:last-child { white-space: nowrap; font-weight: 600; }
 .parte-importe { font-size: 13px; margin-top: 4px; color: var(--muted); }
 .parte-importe b { color: #16a34a; }
+.dias { font-size: 12px; font-weight: 800; color: #fff; background: var(--cd, #16a34a); padding: 2px 8px; border-radius: 999px; white-space: nowrap; }
+.dias.fin { background: #94a3b8; }
+.estado-actual .dias { font-size: 13px; }
+.recorte { position: fixed; inset: 0; z-index: 150; background: #000; display: grid; grid-template-rows: auto 1fr auto; color: #fff; }
+.recorte-cab { padding: calc(12px + var(--safe-t)) 16px 10px; text-align: center; font-weight: 600; font-size: 15px; }
+.recorte-zona { display: grid; place-items: center; overflow: hidden; padding: 8px; min-height: 0; }
+.recorte-lienzo { position: relative; max-width: 100%; max-height: 100%; line-height: 0; }
+.recorte-lienzo img { max-width: 100%; max-height: calc(100vh - 150px); display: block; user-select: none; -webkit-user-drag: none; }
+.recorte-caja { position: absolute; border: 2px solid #22c55e; box-shadow: 0 0 0 9999px rgba(0,0,0,.55); touch-action: none; cursor: move; }
+.recorte-caja i { position: absolute; width: 34px; height: 34px; border: 5px solid #22c55e; background: rgba(34,197,94,.15); }
+.recorte-caja i[data-h=nw] { left: -6px; top: -6px; border-right: 0; border-bottom: 0; cursor: nwse-resize; }
+.recorte-caja i[data-h=ne] { right: -6px; top: -6px; border-left: 0; border-bottom: 0; cursor: nesw-resize; }
+.recorte-caja i[data-h=sw] { left: -6px; bottom: -6px; border-right: 0; border-top: 0; cursor: nesw-resize; }
+.recorte-caja i[data-h=se] { right: -6px; bottom: -6px; border-left: 0; border-top: 0; cursor: nwse-resize; }
+.recorte-pie { display: grid; grid-template-columns: 1fr 1fr 1.4fr; gap: 8px; padding: 10px 12px calc(12px + var(--safe-b)); background: #0f172a; }
+.filtros { display: flex; gap: 8px; align-items: center; padding: 4px 12px 0; flex-wrap: wrap; }
+.filtros .solo-mios { padding: 0; }
+.filtros select { width: auto; flex: 1; min-width: 130px; padding: 7px 8px; font-size: 14px; }
+.editar-ev { position: absolute; top: 2px; right: 0; width: 30px; height: 30px; border: 0; background: transparent; color: var(--muted); display: grid; place-items: center; cursor: pointer; }
+.zona-borrar { margin: 20px 12px 0; text-align: center; }
+.zona-borrar .suave { margin-top: 6px; }
+.lista-botones.dos { grid-template-columns: 1fr 1fr; margin-top: 8px; }
+.parte.papel { cursor: default; }
+.chips.cats { padding-top: 4px; }
+.chips.cats .chip { font-size: 12.5px; padding: 6px 10px; }
