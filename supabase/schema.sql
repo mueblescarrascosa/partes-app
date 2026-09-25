@@ -40,6 +40,7 @@ create table if not exists public.partes (
   aseguradora         text not null,
   expediente          text,
   num_encargo         text,
+  num_siniestro       text,
   poliza              text,
   fecha_encargo       date,
 
@@ -116,6 +117,7 @@ create table if not exists public.fotos (
 create index if not exists fotos_parte_idx on public.fotos (parte_id);
 
 alter table public.partes add column if not exists num_encargo text;
+alter table public.partes add column if not exists num_siniestro text;
 
 -- ---------- Seguridad (RLS) ----------
 alter table public.miembros enable row level security;
