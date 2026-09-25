@@ -99,22 +99,30 @@ async function conAnthropic({ data, mime }: Entrada) {
 async function conGemini({ data, mime }: Entrada) {
   const key = Deno.env.get("GEMINI_API_KEY");
   if (!key) throw new Error("Falta el secreto GEMINI_API_KEY");
-  const model = Deno.env.get("GEMINI_MODEL") ?? "gemini-2.5-flash";
-  const r = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
-    {
-      method: "POST",
-      headers: { "content-type": "application/json", "x-goog-api-key": key },
-      body: JSON.stringify({
-        contents: [{ parts: [{ inline_data: { mime_type: mime, data } }, { text: PROMPT }] }],
-        generationConfig: { responseMimeType: "application/json", temperature: 0 },
-      }),
-    },
-  );
-  const j = await r.json();
-  if (!r.ok) throw new Error(`Gemini ${r.status}: ${j?.error?.message ?? JSON.stringify(j)}`);
-  const texto = j.candidates?.[0]?.content?.parts?.map((p: any) => p.text ?? "").join("") ?? "";
-  return limpiarJSON(texto);
+  const modelos = (Deno.env.get("GEMINI_MODEL") ?? "gemini-flash-latest,gemini-3.8-flash,gemini-2.5-flash").split(",").map((m) => m.trim());
+  let ultimoError = "";
+  for (const model of modelos) {
+    const r = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-goog-api-key": key },
+        body: JSON.stringify({
+          contents: [{ parts: [{ inline_data: { mime_type: mime, data } }, { text: PROMPT }] }],
+          generationConfig: { responseMimeType: "application/json", temperature: 0 },
+        }),
+      },
+    );
+    const j = await r.json();
+    if (!r.ok) {
+      ultimoError = `Gemini ${model} ${r.status}: ${j?.error?.message ?? JSON.stringify(j)}`;
+      if (r.status === 404 || r.status === 400) continue;
+      throw new Error(ultimoError);
+    }
+    const texto = j.candidates?.[0]?.content?.parts?.map((p: any) => p.text ?? "").join("") ?? "";
+    return limpiarJSON(texto);
+  }
+  throw new Error(ultimoError || "Ningún modelo de Gemini disponible");
 }
 
 function resp(body: unknown, status = 200) {
@@ -140,7 +148,7 @@ Deno.serve(async (req) => {
     const { data: miembro, error: e1 } = await sb.rpc("es_miembro");
     if (e1 || !miembro) return resp({ error: "No autorizado" }, 401);
 
-    const { data, mime } = await req.json() as Entrada;
+    const { data, mime, proveedor: forzar } = await req.json() as Entrada & { proveedor?: string };
     if (!data || !mime) return resp({ error: "Faltan datos del archivo" }, 400);
     const permitidos = ["application/pdf", "image/jpeg", "image/png", "image/webp"];
     if (!permitidos.includes(mime)) return resp({ error: `Tipo no admitido: ${mime}` }, 400);
@@ -148,7 +156,7 @@ Deno.serve(async (req) => {
 
     // Orden de prueba: Claude primero y Gemini de respaldo (configurable con IA_PROVEEDOR="gemini,anthropic")
     const orden = (Deno.env.get("IA_PROVEEDOR") ?? "anthropic,gemini").toLowerCase().split(",").map((x) => x.trim());
-    const disponibles = orden.filter((p) =>
+    const disponibles = (forzar ? [forzar] : orden).filter((p) =>
       (p === "anthropic" && Deno.env.get("ANTHROPIC_API_KEY")) || (p === "gemini" && Deno.env.get("GEMINI_API_KEY")));
     if (!disponibles.length) return resp({ error: "No hay ninguna clave de IA configurada (ANTHROPIC_API_KEY o GEMINI_API_KEY)" }, 500);
     const fallos: string[] = [];
