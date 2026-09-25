@@ -9,11 +9,11 @@ window.APP_CONFIG = {
   SUPABASE_ANON_KEY: "sb_publishable_CbwajQX7DgAoK3fV6GVU5g_18CWeqMG", // clave pública (la protege RLS)
 
   EMPRESA: {
-    nombre: "Mi Empresa de Reparaciones",
-    cif: "",
+    nombre: "Muebles Carrascosa SL",
+    cif: "B23237522",
     telefono: "",
     email: "",
-    direccion: "",
+    direccion: "C/ Fuenclara, 72 · 23330 Villanueva del Arzobispo",
   },
 
   // Aseguradoras que salen en el selector (puedes añadir más)
