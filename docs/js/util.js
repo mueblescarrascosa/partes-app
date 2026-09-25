@@ -157,3 +157,94 @@ export function codigoAdicional(tarifa, codigo) {
   const sig = tarifa.filter((x) => (x.orden ?? 0) > (c.orden ?? 0)).sort((a, b) => a.orden - b.orden)[0];
   return sig && /adicional/i.test(sig.descripcion) ? sig : null;
 }
+
+// ---- Contador de días desde que entró el parte (verde → rojo en 60 días)
+export const DIAS_TOPE = 60;
+export function diasParte(p) {
+  const fin = p.estado === "realizado" ? new Date(p.updated_at) : new Date();
+  return Math.max(0, Math.floor((fin - new Date(p.created_at)) / 86400000));
+}
+export function colorDias(d) {
+  const t = Math.min(d, DIAS_TOPE) / DIAS_TOPE;       // 0 → 1
+  return `hsl(${Math.round(120 * (1 - t))}, 75%, ${t > 0.5 ? 42 : 38}%)`;
+}
+export function chipDias(p, largo = false) {
+  const d = diasParte(p);
+  if (p.estado === "realizado") return `<span class="dias fin" title="Días hasta terminarlo">✓ ${d} d</span>`;
+  const n = d >= DIAS_TOPE ? `${DIAS_TOPE}+` : `${d}`;
+  const txt = largo ? `⏱ ${n} ${d === 1 ? "día" : "días"}` : `${n} d`;
+  return `<span class="dias" style="--cd:${colorDias(d)}" title="Días desde que entró">${txt}</span>`;
+}
+
+// ---- Recortar una imagen antes de leerla (devuelve Blob JPEG o null si se cancela)
+export function recortarImagen(blob) {
+  return new Promise((resolve) => {
+    const url = URL.createObjectURL(blob);
+    const cap = document.createElement("div");
+    cap.className = "recorte";
+    cap.innerHTML = `
+      <div class="recorte-cab">Ajusta el recuadro a la zona con los datos del parte</div>
+      <div class="recorte-zona"><div class="recorte-lienzo"><img alt="">
+        <div class="recorte-caja"><i data-h="nw"></i><i data-h="ne"></i><i data-h="sw"></i><i data-h="se"></i></div></div></div>
+      <div class="recorte-pie">
+        <button class="btn" data-a="cancelar">Cancelar</button>
+        <button class="btn" data-a="todo">Foto entera</button>
+        <button class="btn primario" data-a="ok">Recortar y leer</button>
+      </div>`;
+    document.body.appendChild(cap);
+    const img = cap.querySelector("img"), caja = cap.querySelector(".recorte-caja"), lienzo = cap.querySelector(".recorte-lienzo");
+    const r = { x: 0.04, y: 0.04, w: 0.92, h: 0.92 };
+    const pintar = () => Object.assign(caja.style, { left: r.x * 100 + "%", top: r.y * 100 + "%", width: r.w * 100 + "%", height: r.h * 100 + "%" });
+    img.onload = pintar;
+    img.src = url;
+    let arrastre = null;
+    const MIN = 0.08;
+    caja.addEventListener("pointerdown", (e) => {
+      const b = lienzo.getBoundingClientRect();
+      arrastre = { h: e.target.dataset.h || "mover", x0: e.clientX, y0: e.clientY, r0: { ...r }, W: b.width, H: b.height };
+      caja.setPointerCapture(e.pointerId); e.preventDefault();
+    });
+    caja.addEventListener("pointermove", (e) => {
+      if (!arrastre) return;
+      const dx = (e.clientX - arrastre.x0) / arrastre.W, dy = (e.clientY - arrastre.y0) / arrastre.H, o = arrastre.r0;
+      const lim = (v, a, b) => Math.min(b, Math.max(a, v));
+      if (arrastre.h === "mover") { r.x = lim(o.x + dx, 0, 1 - o.w); r.y = lim(o.y + dy, 0, 1 - o.h); }
+      else {
+        let x1 = o.x, y1 = o.y, x2 = o.x + o.w, y2 = o.y + o.h;
+        if (arrastre.h.includes("w")) x1 = lim(o.x + dx, 0, x2 - MIN);
+        if (arrastre.h.includes("e")) x2 = lim(x2 + dx, x1 + MIN, 1);
+        if (arrastre.h.includes("n")) y1 = lim(o.y + dy, 0, y2 - MIN);
+        if (arrastre.h.includes("s")) y2 = lim(y2 + dy, y1 + MIN, 1);
+        Object.assign(r, { x: x1, y: y1, w: x2 - x1, h: y2 - y1 });
+      }
+      pintar();
+    });
+    const soltar = () => { arrastre = null; };
+    caja.addEventListener("pointerup", soltar); caja.addEventListener("pointercancel", soltar);
+    const cerrar = (v) => { cap.remove(); URL.revokeObjectURL(url); resolve(v); };
+    cap.querySelector("[data-a=cancelar]").onclick = () => cerrar(null);
+    cap.querySelector("[data-a=todo]").onclick = () => cerrar(blob);
+    cap.querySelector("[data-a=ok]").onclick = () => {
+      const W = img.naturalWidth, H = img.naturalHeight;
+      const c = document.createElement("canvas");
+      c.width = Math.round(r.w * W); c.height = Math.round(r.h * H);
+      c.getContext("2d").drawImage(img, r.x * W, r.y * H, c.width, c.height, 0, 0, c.width, c.height);
+      c.toBlob((b) => cerrar(b), "image/jpeg", 0.92);
+    };
+  });
+}
+
+/** Enlace para añadir la cita a Google Calendar */
+export function linkCalendario(p) {
+  if (!p.fecha_cita) return "";
+  const ini = new Date(p.fecha_cita), fin = new Date(ini.getTime() + 3600000);
+  const f = (d) => d.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}/, "");
+  const q = new URLSearchParams({
+    action: "TEMPLATE",
+    text: `Visita ${p.aseguradora || ""} ${p.expediente || ""} - ${p.nombre || ""}`,
+    dates: `${f(ini)}/${f(fin)}`,
+    details: [p.averia, p.telefono && "Tel: " + p.telefono].filter(Boolean).join("\n"),
+    location: [p.direccion, p.codigo_postal, p.poblacion].filter(Boolean).join(", "),
+  });
+  return "https://calendar.google.com/calendar/render?" + q.toString();
+}

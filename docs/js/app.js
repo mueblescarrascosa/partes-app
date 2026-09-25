@@ -2,7 +2,7 @@ import { api } from "./api.js";
 import {
   $, $$, esc, ESTADOS, estadoInfo, idxEstado, colorAseg, linkLlamar, linkWhatsApp, linkMapa,
   fFecha, fFechaHora, fEuros, hace, toLocalInput, blobABase64, comprimirImagen, panelFirma, toast,
-  importeLinea, totalesLineas, buscarEnTarifa, codigoAdicional,
+  importeLinea, totalesLineas, buscarEnTarifa, codigoAdicional, chipDias, recortarImagen, linkCalendario, diasParte,
 } from "./util.js";
 import { generarInforme } from "./pdf.js";
 
@@ -27,6 +27,7 @@ const app = $("#app");
 const S = {
   yo: null, miembros: [], partes: [],
   filtro: sessionGet("filtro") ?? "activos", busqueda: "", soloMios: sessionGet("soloMios") === "1",
+  orden: sessionGet("orden") ?? "recientes", filtroAseg: sessionGet("filtroAseg") ?? "",
   borrador: null, // parte nuevo pendiente de guardar {datos, archivo, mime}
 };
 
@@ -97,6 +98,7 @@ async function router() {
   if (ruta === "parte" && id) return vistaParte(id);
   if (ruta === "editar" && id) return vistaFormulario(id);
   if (ruta === "lineas" && id) return vistaLineas(id, h.split("/")[3] || "valoracion");
+  if (ruta === "papelera") return vistaPapelera();
   if (ruta === "tarifa") return S.yo?.es_admin ? vistaTarifa() : (location.hash = "/");
   if (ruta === "ajustes") return S.yo?.es_admin ? vistaAjustes() : (location.hash = "/");
   location.hash = "/";
@@ -154,12 +156,20 @@ async function vistaLista() {
     ${I.search}<input id="busca" type="search" placeholder="Buscar nombre, expediente, calle, teléfono…" value="${esc(S.busqueda)}">
   </div>
   <div class="chips" id="chips"></div>
-  <label class="solo-mios"><input type="checkbox" id="soloMios" ${S.soloMios ? "checked" : ""}> Solo asignados a mí</label>
+  <div class="filtros">
+    <label class="solo-mios"><input type="checkbox" id="soloMios" ${S.soloMios ? "checked" : ""}> Solo míos</label>
+    <select id="fAseg"><option value="">Todas las aseguradoras</option>${[...new Set(S.partes.map((p) => p.aseguradora).concat(CFG.ASEGURADORAS))].filter((a) => a && a !== "Otra").map((a) => `<option ${a === S.filtroAseg ? "selected" : ""}>${esc(a)}</option>`).join("")}</select>
+    <select id="orden">
+      ${[["recientes", "Últimos movidos"], ["antiguos", "Más días primero"], ["cita", "Próxima cita"], ["nuevos", "Últimos entrados"]].map(([v, t]) => `<option value="${v}" ${S.orden === v ? "selected" : ""}>${t}</option>`).join("")}
+    </select>
+  </div>
   <main id="lista" class="lista"><div class="vacio">Cargando…</div></main>
   <button class="fab" id="nuevo" aria-label="Nuevo parte">${I.plus}</button>`;
 
   $("#busca").addEventListener("input", (e) => { S.busqueda = e.target.value; pintarLista(); });
   $("#soloMios").addEventListener("change", (e) => { S.soloMios = e.target.checked; sessionSet("soloMios", S.soloMios ? "1" : "0"); pintarLista(); });
+  $("#fAseg").addEventListener("change", (e) => { S.filtroAseg = e.target.value; sessionSet("filtroAseg", S.filtroAseg); pintarLista(); });
+  $("#orden").addEventListener("change", (e) => { S.orden = e.target.value; sessionSet("orden", S.orden); pintarLista(); });
   $("#nuevo").addEventListener("click", menuNuevo);
   $("#recargar").addEventListener("click", cargarPartes);
   $("#menuUsuario").addEventListener("click", menuUsuario);
@@ -177,6 +187,7 @@ function pintarLista() {
   const q = S.busqueda.trim().toLowerCase();
   let base = S.partes;
   if (S.soloMios) base = base.filter((p) => p.asignado_a === S.yo.user_id);
+  if (S.filtroAseg) base = base.filter((p) => p.aseguradora === S.filtroAseg);
   if (q) base = base.filter((p) =>
     [p.nombre, p.expediente, p.num_encargo, p.num_siniestro, p.direccion, p.poblacion, p.telefono, p.aseguradora, p.averia, p.poliza]
       .some((v) => String(v ?? "").toLowerCase().includes(q)));
@@ -194,6 +205,14 @@ function pintarLista() {
   let lista = base;
   if (S.filtro === "activos") lista = base.filter((p) => p.estado !== "realizado");
   else if (S.filtro !== "todos") lista = base.filter((p) => p.estado === S.filtro);
+
+  const ordenes = {
+    recientes: (a, b) => (b.updated_at || "").localeCompare(a.updated_at || ""),
+    nuevos: (a, b) => (b.created_at || "").localeCompare(a.created_at || ""),
+    antiguos: (a, b) => diasParte(b) - diasParte(a),
+    cita: (a, b) => (a.fecha_cita ? 0 : 1) - (b.fecha_cita ? 0 : 1) || (a.fecha_cita || "").localeCompare(b.fecha_cita || ""),
+  };
+  lista = [...lista].sort(ordenes[S.orden] || ordenes.recientes);
 
   const cont = $("#lista");
   if (!lista.length) {
@@ -215,6 +234,7 @@ function tarjetaParte(p) {
     <div class="parte-top">
       <span class="aseg">${esc(p.aseguradora)}</span>
       <span class="exp">${esc(p.expediente || "sin nº")}</span>
+      ${chipDias(p)}
       <span class="estado" style="--c:${e.color}">${e.nombre}</span>
     </div>
     <div class="parte-nombre">${esc(p.nombre || "Sin nombre")}</div>
@@ -239,12 +259,14 @@ function menuUsuario() {
       ${S.yo?.es_admin ? '<button class="btn primario ancho" id="irAjustes">⚙️ Ajustes y usuarios</button>' : ""}
       ${api.modo === "supabase" ? '<button class="btn ancho" id="cambiarPw">Cambiar contraseña</button>' : ""}
       ${yaInstalada() ? "" : '<button class="btn ancho" id="instalarMenu">Instalar como app</button>'}
+      <button class="btn ancho" id="irPapelera">🗑 Papelera (partes borrados)</button>
       <button class="btn ancho" id="exportar">Exportar partes (CSV)</button>
       ${api.modo === "supabase" ? '<button class="btn ancho peligro" id="salir">Cerrar sesión</button>' : ""}
       <button class="btn texto ancho" data-cerrar>Cerrar</button>
     </div>`);
   $("#salir", s)?.addEventListener("click", async () => { await api.salir(); S.yo = null; cerrarSheet(); router(); });
   $("#exportar", s).addEventListener("click", exportarCSV);
+  $("#irPapelera", s).addEventListener("click", () => { cerrarSheet(); location.hash = "/papelera"; });
   $("#irAjustes", s)?.addEventListener("click", () => { cerrarSheet(); location.hash = "/ajustes"; });
   $("#instalarMenu", s)?.addEventListener("click", instalarApp);
   $("#cambiarPw", s)?.addEventListener("click", async () => {
@@ -287,13 +309,21 @@ function menuNuevo() {
 async function procesarArchivo(file) {
   if (!file) return;
   const esPDF = file.type === "application/pdf" || /\.pdf$/i.test(file.name);
-  let blob = file, mime = esPDF ? "application/pdf" : "image/jpeg";
+  let blob = file, lectura = file, mime = esPDF ? "application/pdf" : "image/jpeg";
   try {
-    cargando(true, "Preparando documento…");
-    if (!esPDF) blob = await comprimirImagen(file, 2000, 0.85);
-    if (blob.size > 9.5 * 1024 * 1024) throw new Error("El archivo pesa demasiado (máx. 9 MB)");
+    if (!esPDF) {
+      cargando(true, "Preparando foto…");
+      const grande = await comprimirImagen(file, 3000, 0.92);
+      cargando(false);
+      const recorte = await recortarImagen(grande);
+      if (!recorte) return;                                   // cancelado
+      cargando(true, "Preparando foto…");
+      blob = await comprimirImagen(grande, 2000, 0.85);       // se guarda la foto entera
+      lectura = recorte === grande ? blob : await comprimirImagen(recorte, 2000, 0.88);
+    }
+    if (lectura.size > 9.5 * 1024 * 1024) throw new Error("El archivo pesa demasiado (máx. 9 MB)");
     cargando(true, "Leyendo el parte con IA…");
-    const datos = await api.extraer(await blobABase64(blob), mime);
+    const datos = await api.extraer(await blobABase64(lectura), mime);
     S.borrador = { datos: normalizar(datos), archivo: blob, mime };
     irANuevo();
   } catch (e) {
@@ -364,6 +394,10 @@ async function vistaFormulario(id) {
       ${campo("tramitador_nombre", "Tramitador")}
       <div class="dos">${campo("tramitador_telefono", "Tel. tramitador", "tel")}${campo("tramitador_email", "Email tramitador", "email")}</div>
     </div>
+    ${id ? `<div class="tarjeta">
+      <label>Fecha y hora de la cita<input type="datetime-local" name="fecha_cita" value="${toLocalInput(p.fecha_cita)}"></label>
+      <div class="dos">${campo("importe_valorado", "Valorado (€ sin IVA)", "number", 'step="0.01" inputmode="decimal"')}${campo("importe_autorizado", "Autorizado (€)", "number", 'step="0.01" inputmode="decimal"')}</div>
+    </div>` : ""}
     <div class="tarjeta">
       <label>Asignado a
         <select name="asignado_a"><option value="">— Sin asignar —</option>
@@ -382,6 +416,8 @@ async function vistaFormulario(id) {
     e.preventDefault();
     const f = Object.fromEntries(new FormData(e.target));
     for (const k in f) if (f[k] === "") f[k] = null;
+    if (f.fecha_cita) f.fecha_cita = new Date(f.fecha_cita).toISOString();
+    for (const k of ["importe_valorado", "importe_autorizado"]) if (f[k] != null) f[k] = Number(String(f[k]).replace(",", "."));
     if (!f.aseguradora) return toast("Elige la aseguradora", "error");
     try {
       if (id) {
@@ -390,6 +426,13 @@ async function vistaFormulario(id) {
         location.replace("#/parte/" + id);
       } else {
         const dup = await api.buscarDuplicado(f.aseguradora, f.expediente);
+        if (dup?.borrado_at) {
+          if (confirm(`Ese parte (${f.aseguradora} ${f.expediente}) está en la papelera. ¿Recuperarlo?`)) {
+            await conCarga("Recuperando…", () => api.restaurarParte(dup.id));
+            return (location.hash = "/parte/" + dup.id);
+          }
+          return;
+        }
         if (dup && !confirm(`Ya existe un parte de ${f.aseguradora} con el expediente ${f.expediente} (${dup.nombre ?? ""}). ¿Crear otro igualmente?`)) {
           return (location.hash = "/parte/" + dup.id);
         }
@@ -450,7 +493,7 @@ async function vistaParte(id) {
           <i>${i < idx ? "✓" : i + 1}</i><span>${s.nombre}</span>
         </button>`).join("")}
     </div>
-    <div class="estado-actual" style="--c:${e.color}">Estado: <b>${e.nombre}</b>${p.fecha_cita && idx < 2 ? ` · Cita ${fFechaHora(p.fecha_cita)}` : ""}</div>
+    <div class="estado-actual" style="--c:${e.color}">${chipDias(p, true)} · Estado: <b>${e.nombre}</b>${p.fecha_cita && idx < 2 ? ` · Cita ${fFechaHora(p.fecha_cita)}` : ""}</div>
     <div class="lista-botones">
       ${sig ? `<button class="btn primario ancho" id="avanzar" style="--c:${sig.color}">Marcar como ${sig.nombre.toLowerCase()} →</button>` : ""}
       ${idx >= idxEstado("visitado") ? `<button class="btn primario ancho" id="informe" style="--c:#16a34a">${I.pdf} PDF de ${p.estado === "realizado" ? "trabajo terminado" : "visita"} → ${esc(DEST.nombre)}</button>` : ""}
@@ -471,7 +514,7 @@ async function vistaParte(id) {
     ${dato("Nº siniestro", p.num_siniestro)}
     ${dato("Póliza", p.poliza)}
     ${dato("Fecha encargo", fFecha(p.fecha_encargo))}
-    ${dato("Cita", fFechaHora(p.fecha_cita))}
+    ${p.fecha_cita ? `<div class="dato"><span>Cita</span><b>${fFechaHora(p.fecha_cita)} · <a href="${linkCalendario(p)}" target="_blank" rel="noopener">📅 Añadir al calendario</a></b></div>` : ""}
     ${dato("Valorado (sin IVA)", fEuros(p.importe_valorado))}
     ${dato("Autorizado", fEuros(p.importe_autorizado))}
     <div class="dato"><span>Asignado</span><b>
@@ -498,11 +541,13 @@ async function vistaParte(id) {
         return `<li style="--c:${s ? s.color : "#94a3b8"}">
           <div class="h-cab"><b>${s ? s.nombre : "Nota"}</b><span>${fFechaHora(ev.created_at)}${nombreDe(ev.creado_por) ? " · " + esc(nombreDe(ev.creado_por)) : ""}</span></div>
           ${ev.nota ? `<p class="pre">${esc(ev.nota)}</p>` : ""}
-          ${!ev.estado ? `<button class="borrar-nota" data-id="${ev.id}" aria-label="Borrar nota">${I.x}</button>` : ""}
+          <button class="editar-ev" data-id="${ev.id}" aria-label="Editar">${I.edit}</button>
         </li>`;
       }).join("")}
     </ol>
   </section>
+  <div class="zona-borrar"><button class="btn ancho peligro" id="aPapelera">🗑 Borrar este parte</button>
+    <p class="suave">Va a la papelera (icono de la persona → Papelera) y se puede recuperar.</p></div>
   <div style="height:40px"></div>`;
 
   $("#volver").onclick = () => (history.length > 1 ? history.back() : (location.hash = "/"));
@@ -525,11 +570,8 @@ async function vistaParte(id) {
     if (w) w.location = url; else location.href = url;
   });
   $("#addFoto").onclick = () => sheetFotos(p);
-  $$(".borrar-nota").forEach((b) => b.addEventListener("click", async () => {
-    if (!confirm("¿Borrar esta nota?")) return;
-    await conCarga("Borrando…", () => api.borrarEvento(Number(b.dataset.id)));
-    vistaParte(p.id);
-  }));
+  $$(".editar-ev").forEach((b) => b.addEventListener("click", () => sheetEvento(p, p.eventos.find((e) => String(e.id) === b.dataset.id))));
+  $("#aPapelera").onclick = () => enviarPapelera(p);
   pintarFotos(p);
 }
 
@@ -617,18 +659,115 @@ function menuParte(p) {
   const s = abrirSheet(`
     <h2>Parte ${esc(p.expediente || "")}</h2>
     <div class="lista-botones">
-      <button class="btn ancho" id="mEditar">${I.edit} Editar datos</button>
+      <button class="btn ancho" id="mEditar">${I.edit} Editar datos, cita e importes</button>
+      <button class="btn ancho" id="mDoc">${I.cam} Cambiar documento / volver a leer con IA</button>
       <button class="btn ancho" id="mInforme">${I.pdf} Generar PDF (en cualquier fase)</button>
-      <button class="btn ancho peligro" id="mBorrar">Borrar parte</button>
+      <button class="btn ancho peligro" id="mBorrar">🗑 Borrar parte (a la papelera)</button>
       <button class="btn texto ancho" data-cerrar>Cerrar</button>
-    </div>`);
+    </div>
+    <p class="suave">Para cambiar de fase (también hacia atrás) toca el círculo de la fase en la ficha.</p>`);
   $("#mEditar", s).onclick = () => { location.hash = "/editar/" + p.id; };
   $("#mInforme", s).onclick = () => flujoInforme(p);
-  $("#mBorrar", s).onclick = async () => {
-    if (!confirm("¿Borrar este parte con todas sus fotos y notas? No se puede deshacer.")) return;
-    await conCarga("Borrando…", () => api.borrarParte(p.id));
-    toast("Parte borrado"); location.hash = "/";
+  $("#mBorrar", s).onclick = () => enviarPapelera(p);
+  $("#mDoc", s).onclick = () => { cerrarSheet(); releerDocumento(p); };
+}
+
+async function enviarPapelera(p) {
+  if (!confirm(`¿Borrar el parte ${p.aseguradora} ${p.expediente || ""} (${p.nombre || "sin nombre"})?\nIrá a la papelera y podrás recuperarlo.`)) return;
+  await conCarga("Borrando…", () => api.aPapelera(p.id));
+  cerrarSheet(); toast("Parte enviado a la papelera"); location.hash = "/";
+}
+
+function releerDocumento(p) {
+  const inp = document.createElement("input");
+  inp.type = "file"; inp.accept = "application/pdf,image/*";
+  inp.onchange = async () => {
+    const file = inp.files[0]; if (!file) return;
+    const esPDF = file.type === "application/pdf" || /\.pdf$/i.test(file.name);
+    let blob = file, lectura = file;
+    const mime = esPDF ? "application/pdf" : "image/jpeg";
+    try {
+      if (!esPDF) {
+        const grande = await comprimirImagen(file, 3000, 0.92);
+        const recorte = await recortarImagen(grande); if (!recorte) return;
+        blob = await comprimirImagen(grande, 2000, 0.85);
+        lectura = recorte === grande ? blob : await comprimirImagen(recorte, 2000, 0.88);
+      }
+      const b64 = await blobABase64(lectura);
+      const datos = normalizar(await conCarga("Leyendo con IA…", () => api.extraer(b64, mime)));
+      const vacios = Object.keys(datos).filter((k) => datos[k] && (p[k] == null || p[k] === "") && k in p);
+      const distintos = Object.keys(datos).filter((k) => datos[k] && p[k] && String(p[k]) !== datos[k] && k in p);
+      const s = abrirSheet(`
+        <h2>Datos leídos</h2>
+        ${vacios.length ? `<p>Se rellenarán <b>${vacios.length}</b> campos vacíos: ${vacios.map(esc).join(", ")}.</p>` : "<p>No hay campos vacíos que rellenar.</p>"}
+        ${distintos.length ? `<label class="check"><input type="checkbox" id="sobrescribir"> Sustituir también ${distintos.length} campos que ya tenían otro valor (${distintos.map(esc).join(", ")})</label>` : ""}
+        <label class="check"><input type="checkbox" id="guardarDoc" checked> Guardar este documento como parte original</label>
+        <div class="pie-form"><button class="btn" data-cerrar>Cancelar</button><button class="btn primario" id="aplicar">Aplicar</button></div>`);
+      $("#aplicar", s).onclick = async () => {
+        const cambios = {};
+        vacios.forEach((k) => (cambios[k] = datos[k]));
+        if ($("#sobrescribir", s)?.checked) distintos.forEach((k) => (cambios[k] = datos[k]));
+        await conCarga("Guardando…", async () => {
+          if ($("#guardarDoc", s).checked) cambios.documento_path = await api.subirArchivo(`${p.id}/documento_${Date.now()}.${esPDF ? "pdf" : "jpg"}`, blob, mime);
+          if (Object.keys(cambios).length) await api.actualizarParte(p.id, cambios);
+        });
+        cerrarSheet(); toast("Parte actualizado", "ok"); vistaParte(p.id);
+      };
+    } catch (e) { cargando(false); toast("No se pudo leer: " + e.message, "error"); }
   };
+  inp.click();
+}
+
+function sheetEvento(p, ev) {
+  if (!ev) return;
+  const s = abrirSheet(`
+    <h2>${ev.estado ? "Fase " + esc(estadoInfo(ev.estado).nombre) : "Nota"}</h2>
+    <form id="fEv" class="form">
+      <label>Fecha y hora<input type="datetime-local" name="fecha" value="${toLocalInput(ev.created_at)}"></label>
+      <label>Texto<textarea name="nota" rows="4">${esc(ev.nota || "")}</textarea></label>
+      <div class="pie-form"><button type="button" class="btn peligro" id="borrarEv">Borrar</button><button class="btn primario">Guardar</button></div>
+    </form>
+    ${ev.estado ? '<p class="suave">Borrar esta línea no cambia la fase actual del parte. Para cambiar de fase toca el círculo de la fase.</p>' : ""}`);
+  $("#fEv", s).addEventListener("submit", async (e) => {
+    e.preventDefault();
+    const f = Object.fromEntries(new FormData(e.target));
+    await conCarga("Guardando…", () => api.editarEvento(ev.id, { nota: f.nota.trim() || null, ...(f.fecha ? { created_at: new Date(f.fecha).toISOString() } : {}) }));
+    cerrarSheet(); toast("Guardado", "ok"); vistaParte(p.id);
+  });
+  $("#borrarEv", s).onclick = async () => {
+    if (!confirm("¿Borrar esta línea del historial?")) return;
+    await conCarga("Borrando…", () => api.borrarEvento(ev.id));
+    cerrarSheet(); vistaParte(p.id);
+  };
+}
+
+async function vistaPapelera() {
+  let lista = [];
+  try { lista = await conCarga("Cargando…", () => api.listarPapelera()); } catch { /* nada */ }
+  app.innerHTML = `
+  <header class="barra">
+    <button class="icono" id="volver" aria-label="Volver">${I.back}</button>
+    <h1>Papelera <small class="sub">${lista.length}</small></h1><span></span>
+  </header>
+  <main class="lista">${lista.length ? lista.map((p) => `
+    <article class="parte papel" style="--ase:${colorAseg(p.aseguradora)}">
+      <div class="parte-top"><span class="aseg">${esc(p.aseguradora)}</span><span class="exp">${esc(p.expediente || "")}</span><small class="suave">borrado ${hace(p.borrado_at)}</small></div>
+      <div class="parte-nombre">${esc(p.nombre || "Sin nombre")}</div>
+      <div class="lista-botones dos">
+        <button class="btn" data-r="${p.id}">↩ Recuperar</button>
+        ${S.yo?.es_admin ? `<button class="btn peligro" data-b="${p.id}">Borrar para siempre</button>` : ""}
+      </div>
+    </article>`).join("") : '<div class="vacio">La papelera está vacía.</div>'}</main>`;
+  $("#volver").onclick = () => (location.hash = "/");
+  $$("[data-r]").forEach((b) => b.onclick = async () => {
+    await conCarga("Recuperando…", () => api.restaurarParte(b.dataset.r));
+    toast("Parte recuperado", "ok"); vistaPapelera();
+  });
+  $$("[data-b]").forEach((b) => b.onclick = async () => {
+    if (!confirm("Se borrará para siempre, con sus fotos y notas. ¿Seguro?")) return;
+    await conCarga("Borrando…", () => api.borrarParte(b.dataset.b));
+    toast("Borrado definitivamente"); vistaPapelera();
+  });
 }
 
 // ------------------------------------------------------------------ Cambio de fase
@@ -766,6 +905,7 @@ async function vistaLineas(id, tipo) {
   </header>
   ${copiado ? '<div class="aviso">He copiado los códigos de la valoración. Cambia solo lo que haya variado y guarda.</div>' : ""}
   <div class="buscador">${I.search}<input id="bT" type="search" placeholder="Código o descripción (p.ej. 5108, rodapié, galce)" autocomplete="off"></div>
+  <div class="chips cats" id="catsT"></div>
   <div id="resT" class="resultados"></div>
   <section class="tarjeta">
     <div class="h3-fila"><h3>Líneas</h3>
@@ -828,11 +968,27 @@ async function vistaLineas(id, tipo) {
     else { sumarLinea(c, 1); toast(`${c.codigo} añadido`, "ok"); }
     sucio = true; pintarLineas();
   };
-  $("#bT").addEventListener("input", (e) => {
-    const r = buscarEnTarifa(S.tarifa, e.target.value);
-    $("#resT").innerHTML = e.target.value.trim() && !r.length ? '<p class="suave" style="padding:0 16px">Sin resultados. Puedes añadir una línea libre.</p>'
+  // Categorías de la tarifa para buscar rápido
+  const cats = [...new Set(S.tarifa.filter((c) => c.activo !== false).map((c) => c.categoria || "Otros"))];
+  let catSel = null;
+  const pintarRes = (r, vacio) => {
+    $("#resT").innerHTML = vacio ? '<p class="suave" style="padding:0 16px">Sin resultados. Puedes añadir una línea libre.</p>'
       : r.map((c) => `<button class="res" data-c="${esc(c.codigo)}"><b>${esc(c.codigo)}</b><span>${esc(c.descripcion)}</span><em>${fEuros(c.precio)}</em></button>`).join("");
     $$("#resT .res").forEach((b) => b.onclick = () => anadir(S.tarifa.find((c) => c.codigo === b.dataset.c)));
+  };
+  const pintarCats = () => {
+    $("#catsT").innerHTML = cats.map((c) => `<button class="chip ${c === catSel ? "activo" : ""}" data-cat="${esc(c)}">${esc(c)}</button>`).join("");
+    $$("#catsT .chip").forEach((b) => b.onclick = () => {
+      catSel = catSel === b.dataset.cat ? null : b.dataset.cat;
+      $("#bT").value = ""; pintarCats();
+      pintarRes(catSel ? S.tarifa.filter((c) => c.activo !== false && (c.categoria || "Otros") === catSel) : []);
+    });
+  };
+  pintarCats();
+  $("#bT").addEventListener("input", (e) => {
+    const r = buscarEnTarifa(S.tarifa, e.target.value);
+    if (e.target.value.trim()) { catSel = null; pintarCats(); }
+    pintarRes(r, e.target.value.trim() && !r.length);
   });
   $("#libre").onclick = () => { lineas.push({ codigo: "", descripcion: "", cantidad: 1, precio: 0, dto: 0 }); sucio = true; pintarLineas(); $$("#lineas .desc").at(-1)?.focus(); };
   $("#dtoTodo").onclick = () => {
@@ -1078,6 +1234,11 @@ async function instalarApp() {
     <p><b>iPhone (Safari):</b> botón Compartir → <b>Añadir a pantalla de inicio</b>.</p>
     <button class="btn texto ancho" data-cerrar>Cerrar</button>`);
 }
+
+// Al volver a la app (otra pestaña, desbloquear el móvil…) se recargan los partes
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible" && $("#lista") && S.yo) cargarPartes();
+});
 
 // ------------------------------------------------------------------ Arranque
 $("#inCamara").addEventListener("change", (e) => { procesarArchivo(e.target.files[0]); e.target.value = ""; });

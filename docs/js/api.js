@@ -36,7 +36,15 @@ function crearApiSupabase() {
     async miembros() { return ok(await sb.from("miembros").select("user_id,nombre,telefono").order("nombre")); },
 
     async listarPartes() {
-      return ok(await sb.from("partes").select("*").order("updated_at", { ascending: false }).limit(2000));
+      return ok(await sb.from("partes").select("*").is("borrado_at", null).order("updated_at", { ascending: false }).limit(3000));
+    },
+    async listarPapelera() {
+      return ok(await sb.from("partes").select("id,aseguradora,expediente,nombre,poblacion,estado,borrado_at").not("borrado_at", "is", null).order("borrado_at", { ascending: false }));
+    },
+    async aPapelera(id) { ok(await sb.from("partes").update({ borrado_at: new Date().toISOString() }).eq("id", id)); },
+    async restaurarParte(id) { ok(await sb.from("partes").update({ borrado_at: null }).eq("id", id)); },
+    async editarEvento(id, cambios) { ok(await sb.from("eventos").update(cambios).eq("id", id)); },
+    async _sinUso() {
     },
     async obtenerParte(id) {
       const [p, ev, fo] = await Promise.all([
@@ -48,7 +56,7 @@ function crearApiSupabase() {
     },
     async buscarDuplicado(aseguradora, expediente) {
       if (!expediente) return null;
-      const r = ok(await sb.from("partes").select("id,nombre,estado").ilike("aseguradora", aseguradora).eq("expediente", expediente).limit(1));
+      const r = ok(await sb.from("partes").select("id,nombre,estado,borrado_at").ilike("aseguradora", aseguradora).eq("expediente", expediente).limit(1));
       return r[0] ?? null;
     },
     async crearParte(p) { return ok(await sb.from("partes").insert(p).select().single()); },
@@ -142,7 +150,11 @@ function crearApiDemo() {
     async entrar() {}, async salir() {}, async recuperar() {}, async cambiarPassword() {},
     async yo() { return YO; },
     async miembros() { return [YO, { user_id: "demo2", nombre: "Técnico 2" }]; },
-    async listarPartes() { return [...db.partes].sort((a, b) => b.updated_at.localeCompare(a.updated_at)); },
+    async listarPartes() { return db.partes.filter((p) => !p.borrado_at).sort((a, b) => b.updated_at.localeCompare(a.updated_at)); },
+    async listarPapelera() { return db.partes.filter((p) => p.borrado_at); },
+    async aPapelera(id) { const p = db.partes.find((x) => x.id === id); p.borrado_at = ahora(); guardar(); },
+    async restaurarParte(id) { const p = db.partes.find((x) => x.id === id); p.borrado_at = null; guardar(); },
+    async editarEvento(id, c) { const e = db.eventos.find((x) => x.id === id); Object.assign(e, c); guardar(); },
     async obtenerParte(id) {
       const p = db.partes.find((x) => x.id === id);
       if (!p) throw new Error("No encontrado");
