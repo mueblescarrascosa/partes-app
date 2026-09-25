@@ -18,11 +18,12 @@ const PROMPT = `Eres un asistente que lee partes de siniestro de aseguradoras es
 Extrae los datos del documento y responde ÚNICAMENTE con un objeto JSON, sin texto adicional, con estas claves:
 
 {
-  "aseguradora": "nombre de la compañía (p.ej. Mapfre, Santalucía, Iris Global, Caser). Si el parte viene de una gestora/plataforma de asistencia, pon esa.",
+  "aseguradora": "compañía que envía el encargo: Mapfre, Santalucía, Iris Global, Caser, etc. NUNCA el 'Profesional' o reparador. Si no se puede saber, null.",
   "expediente": "número de EXPEDIENTE o SINIESTRO de la compañía (en Iris Global es el campo 'Nº EXPEDIENTE IRIS', p.ej. IM26138511)",
-  "num_encargo": "número de ENCARGO / servicio / orden de trabajo, si es distinto del expediente (en Iris Global el 'Nº' bajo 'ENCARGO DE TRABAJO')",
+  "num_encargo": "número de ENCARGO / servicio / orden de trabajo, si es distinto del expediente (el 'Nº' bajo 'ENCARGO DE TRABAJO')",
+  "num_siniestro": "número de SINIESTRO si es distinto del expediente (p.ej. 'Nº SINIESTRO (NES)')",
   "poliza": "número de póliza (solo si aparece un número de póliza real; nombres de producto o convenio como 'INTEGRAL KBS' NO son póliza)",
-  "fecha_encargo": "fecha del encargo en formato AAAA-MM-DD",
+  "fecha_encargo": "fecha del ENCARGO (campo 'F. ENCARGO'; NO la fecha de ocurrencia ni de comunicación) en formato AAAA-MM-DD",
   "nombre": "nombre y apellidos del asegurado o persona de contacto",
   "direccion": "calle, número, piso y puerta del riesgo",
   "codigo_postal": "",
@@ -36,12 +37,18 @@ Extrae los datos del documento y responde ÚNICAMENTE con un objeto JSON, sin te
   "tramitador_email": "email del tramitador"
 }
 
+Formatos conocidos:
+- IRIS GLOBAL: cabecera con logo "IRIS GLOBAL". expediente = "Nº EXPEDIENTE IRIS" (tipo IM26138511); num_encargo = "Nº" de "ENCARGO DE TRABAJO"; gestor = campo "GESTOR".
+- SANTALUCÍA: empieza con "Según instrucciones de nuestro Asegurado, le efectuamos el encargo..." y tiene los campos "Nº SINIESTRO (NES)", "RAMO", "MODALIDAD", "CENTRO TRAMITADOR" y "REF.EMPRESA ASIST.". Aunque no aparezca el nombre, es Santalucía. expediente = "REF.EMPRESA ASIST." (p.ej. 916236817); num_siniestro = "Nº SINIESTRO (NES)"; num_encargo = "Nº" de "ENCARGO DE TRABAJO"; poliza = "PÓLIZA"; el "GESTOR" suele ser un código numérico: ponlo en tramitador_nombre.
+- MAPFRE: suele traer el logo o el nombre MAPFRE; expediente = número de expediente/siniestro de Mapfre.
+
 Reglas:
 - Usa null en lo que no aparezca. No inventes datos.
 - Los datos del "Profesional" o "Reparador" (código profesional, domicilio y CIF del taller) son de la empresa que recibe el encargo, NO del asegurado: ignóralos.
 - El "Gestor" o "Tramitador" es la persona de la compañía que lleva el expediente.
 - No confundas el teléfono de la compañía con el del asegurado.
 - TELÉFONOS: son críticos. Léelos cifra a cifra, fijándote bien en dígitos parecidos (4/6/9, 1/7, 3/8, 5/6). Un móvil español tiene 9 cifras y empieza por 6 o 7; un fijo, por 8 o 9. Devuelve solo las 9 cifras, sin espacios ni prefijo.
+- NÚMEROS DE REFERENCIA (expediente, siniestro, encargo, póliza): cópialos cifra a cifra, sin saltarte ni repetir ninguna. Cuenta las cifras antes de responder.
 - Fechas en formato AAAA-MM-DD; en España las fechas del documento van como DD/MM/AAAA.`;
 
 type Entrada = { data: string; mime: string };
