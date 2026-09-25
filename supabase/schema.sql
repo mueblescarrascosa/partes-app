@@ -172,3 +172,18 @@ create policy archivos_equipo_del on storage.objects for delete to authenticated
 --  insert into public.miembros (user_id, nombre)
 --  select id, 'Nombre técnico' from auth.users where email = 'tecnico@email.com';
 -- =====================================================================
+
+-- ---------- Ajustes de la app (una sola fila, editable por administradores) ----------
+create table if not exists public.ajustes (
+  id         int primary key default 1 check (id = 1),
+  datos      jsonb not null default '{}',
+  updated_at timestamptz not null default now()
+);
+insert into public.ajustes (id) values (1) on conflict (id) do nothing;
+alter table public.ajustes enable row level security;
+drop policy if exists ajustes_leer on public.ajustes;
+create policy ajustes_leer on public.ajustes for select to authenticated using (public.es_miembro());
+drop policy if exists ajustes_admin_ins on public.ajustes;
+create policy ajustes_admin_ins on public.ajustes for insert to authenticated with check (public.es_admin());
+drop policy if exists ajustes_admin_upd on public.ajustes;
+create policy ajustes_admin_upd on public.ajustes for update to authenticated using (public.es_admin()) with check (public.es_admin());
