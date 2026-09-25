@@ -78,6 +78,33 @@ function crearApiSupabase() {
       ok(await sb.from("fotos").delete().eq("id", foto.id));
     },
 
+    async listarTarifa() {
+      return ok(await sb.from("tarifa").select("*").order("orden", { ascending: true, nullsFirst: false }).order("codigo"));
+    },
+    async guardarCodigo(c) { ok(await sb.from("tarifa").upsert({ ...c, updated_at: new Date().toISOString() })); },
+    async borrarCodigo(codigo) { ok(await sb.from("tarifa").delete().eq("codigo", codigo)); },
+    async leerAjustes() {
+      const { data, error } = await sb.from("ajustes").select("datos").eq("id", 1).maybeSingle();
+      if (error) return {};
+      return data?.datos ?? {};
+    },
+    async guardarAjustes(datos) {
+      ok(await sb.from("ajustes").upsert({ id: 1, datos, updated_at: new Date().toISOString() }));
+    },
+    async adminUsuarios(accion, datos = {}) {
+      const { data, error } = await sb.functions.invoke("admin-usuarios", { body: { accion, ...datos } });
+      if (error) {
+        let msg = error.message;
+        try { const j = await error.context.json(); msg = j.error || msg; } catch { /* nada */ }
+        throw new Error(msg);
+      }
+      if (data?.error) throw new Error(data.error);
+      return data;
+    },
+    async editarMiembro(user_id, cambios) {
+      ok(await sb.from("miembros").update(cambios).eq("user_id", user_id));
+    },
+
     async extraer(base64, mime) {
       const { data, error } = await sb.functions.invoke("extraer-parte", { body: { data: base64, mime } });
       if (error) {
@@ -151,6 +178,19 @@ function crearApiDemo() {
       const f = { id: db.seq++, parte_id, path, tipo, created_at: ahora() }; db.fotos.push(f); guardar(); return f;
     },
     async borrarFoto(foto) { archivos.delete(foto.path); db.fotos = db.fotos.filter((f) => f.id !== foto.id); guardar(); },
+    async listarTarifa() { return db.tarifa ?? []; },
+    async guardarCodigo(c) { db.tarifa ??= []; const i = db.tarifa.findIndex((x) => x.codigo === c.codigo); if (i >= 0) db.tarifa[i] = { ...db.tarifa[i], ...c }; else db.tarifa.push(c); guardar(); },
+    async borrarCodigo(cod) { db.tarifa = (db.tarifa ?? []).filter((x) => x.codigo !== cod); guardar(); },
+    async leerAjustes() { return db.ajustes ?? {}; },
+    async guardarAjustes(d) { db.ajustes = d; guardar(); },
+    async adminUsuarios(accion, d = {}) {
+      db.usuarios ??= [{ id: "demo", email: "demo@demo", nombre: "Usuario demo", es_admin: true, miembro: true }];
+      if (accion === "listar") return { usuarios: db.usuarios };
+      if (accion === "crear") { db.usuarios.push({ id: uuid(), email: d.email, nombre: d.nombre, es_admin: !!d.es_admin, miembro: true }); guardar(); return { ok: true }; }
+      if (accion === "borrar") { db.usuarios = db.usuarios.filter((u) => u.id !== d.id); guardar(); return { ok: true }; }
+      return { ok: true };
+    },
+    async editarMiembro(id, c) { const u = (db.usuarios || []).find((x) => x.id === id); if (u) Object.assign(u, c); guardar(); },
     async extraer() {
       await new Promise((r) => setTimeout(r, 900));
       const ej = [

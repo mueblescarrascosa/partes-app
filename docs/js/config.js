@@ -16,6 +16,9 @@ window.APP_CONFIG = {
     direccion: "C/ Fuenclara, 72 · 23330 Villanueva del Arzobispo",
   },
 
+  // IVA que se suma a la valoración (0 = precios y totales sin IVA)
+  IVA: 0,
+
   // A quién se envían los PDF de visita y de trabajo terminado
   DESTINO_INFORMES: { nombre: "MULTIBETT", telefono: "680412264" },
 

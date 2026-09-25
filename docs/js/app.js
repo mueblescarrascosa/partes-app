@@ -2,11 +2,27 @@ import { api } from "./api.js";
 import {
   $, $$, esc, ESTADOS, estadoInfo, idxEstado, colorAseg, linkLlamar, linkWhatsApp, linkMapa,
   fFecha, fFechaHora, fEuros, hace, toLocalInput, blobABase64, comprimirImagen, panelFirma, toast,
+  importeLinea, totalesLineas, buscarEnTarifa, codigoAdicional,
 } from "./util.js";
 import { generarInforme } from "./pdf.js";
 
 const CFG = window.APP_CONFIG;
-const DEST = CFG.DESTINO_INFORMES || { nombre: "tramitador", telefono: "" };
+const DEST = {
+  get nombre() { return CFG.DESTINO_INFORMES?.nombre || "tramitador"; },
+  get telefono() { return CFG.DESTINO_INFORMES?.telefono || ""; },
+};
+let ajustesCargados = false;
+async function cargarAjustes() {
+  try {
+    const a = await api.leerAjustes();
+    if (a.EMPRESA) CFG.EMPRESA = { ...CFG.EMPRESA, ...a.EMPRESA };
+    if (a.DESTINO_INFORMES) CFG.DESTINO_INFORMES = { ...CFG.DESTINO_INFORMES, ...a.DESTINO_INFORMES };
+    if (Array.isArray(a.ASEGURADORAS) && a.ASEGURADORAS.length) CFG.ASEGURADORAS = a.ASEGURADORAS;
+    if (a.MENSAJE_CLIENTE) CFG.MENSAJE_CLIENTE = a.MENSAJE_CLIENTE;
+    if (a.IVA != null && a.IVA !== "") CFG.IVA = Number(a.IVA);
+    ajustesCargados = true;
+  } catch { /* se usan los valores de config.js */ }
+}
 const app = $("#app");
 const S = {
   yo: null, miembros: [], partes: [],
@@ -72,6 +88,7 @@ async function router() {
     S.yo = await api.yo();
     try { S.miembros = await api.miembros(); } catch { S.miembros = []; }
   }
+  if (!ajustesCargados) await cargarAjustes();
   if (api.modo === "supabase" && !S.yo?.nombre) return vistaSinAcceso();
   const [, ruta, id] = h.split("/");
   window.scrollTo(0, 0);
@@ -79,6 +96,9 @@ async function router() {
   if (ruta === "nuevo") return vistaFormulario(null);
   if (ruta === "parte" && id) return vistaParte(id);
   if (ruta === "editar" && id) return vistaFormulario(id);
+  if (ruta === "lineas" && id) return vistaLineas(id, h.split("/")[3] || "valoracion");
+  if (ruta === "tarifa") return S.yo?.es_admin ? vistaTarifa() : (location.hash = "/");
+  if (ruta === "ajustes") return S.yo?.es_admin ? vistaAjustes() : (location.hash = "/");
   location.hash = "/";
 }
 
@@ -200,6 +220,7 @@ function tarjetaParte(p) {
     <div class="parte-nombre">${esc(p.nombre || "Sin nombre")}</div>
     <div class="parte-dir">${esc([p.direccion, p.poblacion].filter(Boolean).join(", "))}</div>
     ${p.averia ? `<div class="parte-averia">${esc(p.averia)}</div>` : ""}
+    ${p.importe_valorado != null ? `<div class="parte-importe">Valoración: <b>${fEuros(p.importe_valorado)}</b>${p.importe_autorizado != null ? ` · Autorizado: <b>${fEuros(p.importe_autorizado)}</b>` : ""}</div>` : ""}
     <div class="parte-pie">
       <span>${p.fecha_cita && ["contactado"].includes(p.estado) ? `📅 Cita ${fFechaHora(p.fecha_cita)}` : hace(p.updated_at)}${asignado ? " · " + esc(asignado) : ""}</span>
       <span class="parte-acc">
@@ -215,6 +236,7 @@ function menuUsuario() {
     <h2>${esc(S.yo?.nombre || "Usuario")}</h2>
     <p class="suave">${esc(S.yo?.email || "")}</p>
     <div class="lista-botones">
+      ${S.yo?.es_admin ? '<button class="btn primario ancho" id="irAjustes">⚙️ Ajustes y usuarios</button>' : ""}
       ${api.modo === "supabase" ? '<button class="btn ancho" id="cambiarPw">Cambiar contraseña</button>' : ""}
       ${yaInstalada() ? "" : '<button class="btn ancho" id="instalarMenu">Instalar como app</button>'}
       <button class="btn ancho" id="exportar">Exportar partes (CSV)</button>
@@ -223,6 +245,7 @@ function menuUsuario() {
     </div>`);
   $("#salir", s)?.addEventListener("click", async () => { await api.salir(); S.yo = null; cerrarSheet(); router(); });
   $("#exportar", s).addEventListener("click", exportarCSV);
+  $("#irAjustes", s)?.addEventListener("click", () => { cerrarSheet(); location.hash = "/ajustes"; });
   $("#instalarMenu", s)?.addEventListener("click", instalarApp);
   $("#cambiarPw", s)?.addEventListener("click", async () => {
     const pw = prompt("Nueva contraseña (mínimo 8 caracteres)");
@@ -439,6 +462,8 @@ async function vistaParte(id) {
     <h3>Avería / daño</h3>
     <p class="pre">${esc(p.averia || "—")}</p>
   </section>
+  ${idx >= idxEstado("visitado") || (p.lineas_valoracion || []).length ? seccionLineas(p, "valoracion") : ""}
+  ${idx >= idxEstado("autorizado") || (p.lineas_realizadas || []).length ? seccionLineas(p, "realizados") : ""}
 
   <section class="tarjeta datos">
     <h3>Datos</h3>
@@ -447,7 +472,7 @@ async function vistaParte(id) {
     ${dato("Póliza", p.poliza)}
     ${dato("Fecha encargo", fFecha(p.fecha_encargo))}
     ${dato("Cita", fFechaHora(p.fecha_cita))}
-    ${dato("Valorado", fEuros(p.importe_valorado))}
+    ${dato("Valorado (sin IVA)", fEuros(p.importe_valorado))}
     ${dato("Autorizado", fEuros(p.importe_autorizado))}
     <div class="dato"><span>Asignado</span><b>
       <select id="asignar"><option value="">— Sin asignar —</option>
@@ -506,6 +531,23 @@ async function vistaParte(id) {
     vistaParte(p.id);
   }));
   pintarFotos(p);
+}
+
+const htmlTotales = (t) => CFG.IVA
+  ? `<span>Base imponible</span><b>${fEuros(t.base)}</b><span>IVA ${CFG.IVA}%</span><b>${fEuros(t.iva)}</b><span>Total</span><b class="grande">${fEuros(t.total)}</b>`
+  : `<span>Total (sin IVA)</span><b class="grande">${fEuros(t.base)}</b>`;
+
+function seccionLineas(p, tipo) {
+  const lineas = (tipo === "realizados" ? p.lineas_realizadas : p.lineas_valoracion) || [];
+  const t = totalesLineas(lineas, CFG.IVA);
+  return `<section class="tarjeta">
+    <div class="h3-fila"><h3>${tipo === "realizados" ? "Trabajos realizados" : "Valoración"}</h3>
+      <a class="btn peq" href="#/lineas/${p.id}/${tipo}">${lineas.length ? "Editar" : "+ Códigos"}</a></div>
+    ${lineas.length ? `<div class="lineas-mini">${lineas.map((l) => `
+      <div><span><b>${esc(l.codigo || "—")}</b> ${esc(l.descripcion)}</span><span>${Number(l.cantidad)}× · ${fEuros(importeLinea(l))}${Number(l.dto) ? ` <small>(-${Number(l.dto)}%)</small>` : ""}</span></div>`).join("")}</div>
+      <div class="totales">${htmlTotales(t)}</div>`
+      : `<p class="suave">${tipo === "realizados" ? "Sin trabajos anotados. Al editarlos se copian los de la valoración para que solo cambies lo que haya variado." : "Sin códigos. Busca por código o por descripción."}</p>`}
+  </section>`;
 }
 
 const dato = (k, v) => (v ? `<div class="dato"><span>${k}</span><b>${esc(v)}</b></div>` : "");
@@ -608,10 +650,11 @@ function sheetFase(p, destino) {
     <form id="fFase" class="form">
       <label>${PREGUNTA[destino]}<textarea name="nota" rows="4" placeholder="${destino === "contactado" ? "Ej.: le viene bien el martes por la tarde, hay que llamar antes de ir…" : ""}"></textarea></label>
       ${destino === "contactado" ? `<label>Fecha y hora de la visita<input type="datetime-local" name="fecha_cita" value="${toLocalInput(p.fecha_cita)}"></label>` : ""}
-      ${destino === "valorado" ? `<label>Importe valorado (€)<input type="number" step="0.01" inputmode="decimal" name="importe_valorado" value="${p.importe_valorado ?? ""}"></label>` : ""}
+      ${destino === "valorado" ? `<a class="btn ancho" href="#/lineas/${p.id}/valoracion">📋 ${(p.lineas_valoracion || []).length ? "Revisar" : "Meter"} códigos de la tarifa</a>
+        <label>Importe valorado (€, sin IVA)<input type="number" step="0.01" inputmode="decimal" name="importe_valorado" value="${(p.lineas_valoracion || []).length ? totalesLineas(p.lineas_valoracion).base : (p.importe_valorado ?? "")}"></label>` : ""}
       ${destino === "autorizado" ? `<label>Importe autorizado (€)<input type="number" step="0.01" inputmode="decimal" name="importe_autorizado" value="${p.importe_autorizado ?? p.importe_valorado ?? ""}"></label>` : ""}
       ${destino === "visitado" ? `<label class="btn ancho">${I.cam} Fotos de antes (opcional)<input type="file" accept="image/*" multiple hidden name="fotos" data-tipo="antes"></label><small class="suave" id="nFotos"></small>` : ""}
-      ${destino === "realizado" ? `
+      ${destino === "realizado" ? `<a class="btn ancho" href="#/lineas/${p.id}/realizados">📋 ${(p.lineas_realizadas || []).length ? "Revisar" : "Anotar"} trabajos realizados (códigos)</a>
         <label class="btn ancho">${I.cam} Fotos del trabajo terminado<input type="file" accept="image/*" multiple hidden name="fotos" data-tipo="despues"></label><small class="suave" id="nFotos"></small>
         <div class="firma-caja"><div class="h3-fila"><b>Firma del cliente</b><button type="button" class="btn texto peq" id="limpiarFirma">Borrar</button></div>
           <canvas id="firma"></canvas><small class="suave">${p.firma_path ? "Ya hay una firma guardada; si firmas de nuevo se sustituye." : "Opcional. Pide al cliente que firme con el dedo."}</small></div>` : ""}
@@ -694,6 +737,329 @@ async function flujoInforme(pIn) {
     catch (e) { if (e.name !== "AbortError") toast("No se pudo compartir: " + e.message, "error"); }
   });
   $("#descargar", s).onclick = () => descargar(blob, nombre);
+}
+
+
+
+// ------------------------------------------------------------------ Tarifa y líneas
+async function cargarTarifa(forzar = false) {
+  if (S.tarifa && !forzar) return S.tarifa;
+  try { S.tarifa = await api.listarTarifa(); } catch { S.tarifa = []; }
+  return S.tarifa;
+}
+
+async function vistaLineas(id, tipo) {
+  let p;
+  try { p = await conCarga("Cargando…", () => api.obtenerParte(id)); } catch { location.hash = "/"; return; }
+  await cargarTarifa();
+  const campo = tipo === "realizados" ? "lineas_realizadas" : "lineas_valoracion";
+  let lineas = JSON.parse(JSON.stringify(p[campo] || []));
+  let copiado = false;
+  if (tipo === "realizados" && !lineas.length && (p.lineas_valoracion || []).length) { lineas = JSON.parse(JSON.stringify(p.lineas_valoracion)); copiado = true; }
+  let sucio = copiado;
+
+  app.innerHTML = `
+  <header class="barra">
+    <button class="icono" id="volver" aria-label="Volver">${I.back}</button>
+    <h1>${tipo === "realizados" ? "Trabajos realizados" : "Valoración"} <small class="sub">${esc(p.expediente || "")}</small></h1>
+    <button class="btn peq guardar" id="guardarL">Guardar</button>
+  </header>
+  ${copiado ? '<div class="aviso">He copiado los códigos de la valoración. Cambia solo lo que haya variado y guarda.</div>' : ""}
+  <div class="buscador">${I.search}<input id="bT" type="search" placeholder="Código o descripción (p.ej. 5108, rodapié, galce)" autocomplete="off"></div>
+  <div id="resT" class="resultados"></div>
+  <section class="tarjeta">
+    <div class="h3-fila"><h3>Líneas</h3>
+      <span><button class="btn peq" id="libre">+ Línea libre</button> <button class="btn peq" id="dtoTodo">% Dto a todo</button></span></div>
+    <div id="lineas"></div>
+    <div id="totales" class="totales"></div>
+  </section>
+  <div style="height:60px"></div>`;
+
+  const pintarTotales = () => {
+    const t = totalesLineas(lineas, CFG.IVA);
+    $("#totales").innerHTML = htmlTotales(t);
+  };
+  const pintarLineas = () => {
+    const c = $("#lineas");
+    if (!lineas.length) { c.innerHTML = '<p class="suave">Aún no hay líneas. Busca arriba por código o descripción y pulsa en el resultado para añadirlo.</p>'; pintarTotales(); return; }
+    c.innerHTML = lineas.map((l, i) => `
+      <div class="linea" data-i="${i}">
+        <div class="linea-cab"><b>${esc(l.codigo || "Libre")}</b><button class="icono oscuro borrarL" aria-label="Quitar">${I.x}</button></div>
+        <textarea class="desc" rows="2">${esc(l.descripcion)}</textarea>
+        <div class="linea-num">
+          <label>Cant.<input class="cant" type="number" inputmode="decimal" step="0.01" min="0" value="${l.cantidad}"></label>
+          <label>Precio €<input class="prec" type="number" inputmode="decimal" step="0.01" value="${l.precio}"></label>
+          <label>Dto %<input class="dto" type="number" inputmode="decimal" step="0.5" min="0" max="100" value="${l.dto || 0}"></label>
+          <div class="imp"><span>Importe</span><b>${fEuros(importeLinea(l))}</b></div>
+        </div>
+      </div>`).join("");
+    $$(".linea", c).forEach((el) => {
+      const i = Number(el.dataset.i), l = lineas[i];
+      const upd = () => { sucio = true; el.querySelector(".imp b").textContent = fEuros(importeLinea(l)); pintarTotales(); };
+      el.querySelector(".cant").oninput = (e) => { l.cantidad = Number(e.target.value.replace(",", ".")) || 0; upd(); };
+      el.querySelector(".cant").onchange = () => { if (repartirAdicionales(l)) pintarLineas(); };
+      el.querySelector(".prec").oninput = (e) => { l.precio = Number(e.target.value.replace(",", ".")) || 0; upd(); };
+      el.querySelector(".dto").oninput = (e) => { l.dto = Math.min(100, Number(e.target.value.replace(",", ".")) || 0); upd(); };
+      el.querySelector(".desc").oninput = (e) => { l.descripcion = e.target.value; sucio = true; };
+      el.querySelector(".borrarL").onclick = () => { lineas.splice(i, 1); sucio = true; pintarLineas(); };
+    });
+    pintarTotales();
+  };
+  // Si un código "1ª Ud." pasa de 1 unidad, el resto va a su "Ud. adicional"
+  const sumarLinea = (c, n) => {
+    const ex = lineas.find((l) => l.codigo === c.codigo);
+    if (ex) ex.cantidad = Math.round(((Number(ex.cantidad) || 0) + n) * 100) / 100;
+    else lineas.push({ codigo: c.codigo, descripcion: c.descripcion, cantidad: n, precio: Number(c.precio), dto: 0 });
+  };
+  const repartirAdicionales = (l) => {
+    const ad = codigoAdicional(S.tarifa, l.codigo);
+    const extra = (Number(l.cantidad) || 0) - 1;
+    if (!ad || extra <= 0) return false;
+    l.cantidad = 1;
+    sumarLinea(ad, extra);
+    const la = lineas.find((x) => x.codigo === ad.codigo); if (la && !la.dto && l.dto) la.dto = l.dto;
+    toast(`${extra} ud. pasan al ${ad.codigo} (Ud. adicional)`, "ok");
+    return true;
+  };
+  const anadir = (c) => {
+    const ex = lineas.find((l) => l.codigo === c.codigo);
+    const ad = codigoAdicional(S.tarifa, c.codigo);
+    if (ex && ad) { sumarLinea(ad, 1); toast(`+1 ud. adicional (${ad.codigo})`, "ok"); }
+    else { sumarLinea(c, 1); toast(`${c.codigo} añadido`, "ok"); }
+    sucio = true; pintarLineas();
+  };
+  $("#bT").addEventListener("input", (e) => {
+    const r = buscarEnTarifa(S.tarifa, e.target.value);
+    $("#resT").innerHTML = e.target.value.trim() && !r.length ? '<p class="suave" style="padding:0 16px">Sin resultados. Puedes añadir una línea libre.</p>'
+      : r.map((c) => `<button class="res" data-c="${esc(c.codigo)}"><b>${esc(c.codigo)}</b><span>${esc(c.descripcion)}</span><em>${fEuros(c.precio)}</em></button>`).join("");
+    $$("#resT .res").forEach((b) => b.onclick = () => anadir(S.tarifa.find((c) => c.codigo === b.dataset.c)));
+  });
+  $("#libre").onclick = () => { lineas.push({ codigo: "", descripcion: "", cantidad: 1, precio: 0, dto: 0 }); sucio = true; pintarLineas(); $$("#lineas .desc").at(-1)?.focus(); };
+  $("#dtoTodo").onclick = () => {
+    const d = prompt("Descuento (%) para todas las líneas", "0"); if (d == null) return;
+    const n = Math.min(100, Math.max(0, Number(String(d).replace(",", ".")) || 0));
+    lineas.forEach((l) => (l.dto = n)); sucio = true; pintarLineas();
+  };
+  $("#volver").onclick = () => { if (sucio && !confirm("Hay cambios sin guardar. ¿Salir sin guardar?")) return; location.hash = "/parte/" + id; };
+  $("#guardarL").onclick = async () => {
+    const limpias = lineas.filter((l) => l.descripcion.trim() || l.codigo).map((l) => ({ ...l, cantidad: Number(l.cantidad) || 0, precio: Number(l.precio) || 0, dto: Number(l.dto) || 0 }));
+    const cambios = { [campo]: limpias };
+    if (tipo === "valoracion") cambios.importe_valorado = totalesLineas(limpias).base;
+    await conCarga("Guardando…", () => api.actualizarParte(id, cambios));
+    sucio = false; toast("Guardado", "ok"); location.hash = "/parte/" + id;
+  };
+  pintarLineas();
+}
+
+async function vistaTarifa() {
+  await cargarTarifa(true);
+  app.innerHTML = `
+  <header class="barra">
+    <button class="icono" id="volver" aria-label="Volver">${I.back}</button>
+    <h1>Tarifa <small class="sub">${S.tarifa.length} códigos</small></h1>
+    <button class="btn peq guardar" id="nuevoCod">+ Nuevo</button>
+  </header>
+  <div class="buscador">${I.search}<input id="bT" type="search" placeholder="Buscar código o descripción" autocomplete="off"></div>
+  <div id="listaT" class="resultados"></div>`;
+  const pintar = () => {
+    const q = $("#bT").value;
+    const lista = q.trim() ? buscarEnTarifa(S.tarifa.map((c) => ({ ...c, activo: true })), q, 500) : S.tarifa;
+    let cat = null;
+    $("#listaT").innerHTML = lista.map((c) => {
+      const cab = !q.trim() && c.categoria !== cat ? `<h4 class="cat">${esc((cat = c.categoria) || "Otros")}</h4>` : "";
+      return `${cab}<button class="res ${c.activo === false ? "inactivo" : ""}" data-c="${esc(c.codigo)}"><b>${esc(c.codigo)}</b><span>${esc(c.descripcion)}</span><em>${fEuros(c.precio)}</em></button>`;
+    }).join("") || '<p class="suave" style="padding:0 16px">Sin resultados.</p>';
+    $$("#listaT .res").forEach((b) => b.onclick = () => editarCodigo(S.tarifa.find((c) => c.codigo === b.dataset.c)));
+  };
+  const editarCodigo = (c) => {
+    const nuevo = !c; c = c || { codigo: "", descripcion: "", precio: 0, categoria: "", activo: true };
+    const cats = [...new Set(S.tarifa.map((x) => x.categoria).filter(Boolean))];
+    const s = abrirSheet(`
+      <h2>${nuevo ? "Nuevo código" : "Código " + esc(c.codigo)}</h2>
+      <form id="fCod" class="form">
+        <label>Código<input name="codigo" value="${esc(c.codigo)}" ${nuevo ? "required" : "readonly"}></label>
+        <label>Descripción<textarea name="descripcion" rows="3" required>${esc(c.descripcion)}</textarea></label>
+        <div class="dos"><label>Precio (€)<input name="precio" type="number" step="0.01" inputmode="decimal" value="${c.precio}" required></label>
+          <label>Categoría<input name="categoria" list="cats" value="${esc(c.categoria || "")}"></label></div>
+        <datalist id="cats">${cats.map((x) => `<option value="${esc(x)}">`).join("")}</datalist>
+        <label class="check"><input type="checkbox" name="activo" ${c.activo !== false ? "checked" : ""}> Activo (sale en las búsquedas)</label>
+        <div class="pie-form">${nuevo ? '<button type="button" class="btn" data-cerrar>Cancelar</button>' : '<button type="button" class="btn peligro" id="borrarCod">Borrar</button>'}<button class="btn primario">Guardar</button></div>
+      </form>`);
+    $("#fCod", s).addEventListener("submit", async (ev) => {
+      ev.preventDefault();
+      const f = Object.fromEntries(new FormData(ev.target));
+      const cod = f.codigo.trim();
+      if (nuevo && S.tarifa.some((x) => x.codigo === cod)) return toast("Ese código ya existe", "error");
+      await conCarga("Guardando…", () => api.guardarCodigo({ codigo: cod, descripcion: f.descripcion.trim(), precio: Number(String(f.precio).replace(",", ".")) || 0, categoria: f.categoria.trim() || null, activo: !!f.activo, orden: c.orden ?? (Math.max(0, ...S.tarifa.map((x) => x.orden || 0)) + 1) }));
+      await cargarTarifa(true); cerrarSheet(); pintar(); toast("Guardado", "ok");
+    });
+    $("#borrarCod", s)?.addEventListener("click", async () => {
+      if (!confirm(`¿Borrar el código ${c.codigo}? Los partes que ya lo tengan no cambian.`)) return;
+      await conCarga("Borrando…", () => api.borrarCodigo(c.codigo));
+      await cargarTarifa(true); cerrarSheet(); pintar(); toast("Borrado");
+    });
+  };
+  $("#volver").onclick = () => (location.hash = "/ajustes");
+  $("#nuevoCod").onclick = () => editarCodigo(null);
+  $("#bT").addEventListener("input", pintar);
+  pintar();
+}
+
+// ------------------------------------------------------------------ Ajustes (solo administrador)
+async function vistaAjustes() {
+  const E = CFG.EMPRESA, D = CFG.DESTINO_INFORMES || {};
+  let partes = S.partes;
+  if (!partes.length) { try { partes = S.partes = await api.listarPartes(); } catch { partes = []; } }
+  const ahora = new Date(), mes = ahora.toISOString().slice(0, 7);
+  const cuenta = (f) => partes.filter(f).length;
+  const porAseg = {};
+  partes.forEach((p) => { porAseg[p.aseguradora] = (porAseg[p.aseguradora] || 0) + 1; });
+  const tarjetaNum = (n, t, c = "") => `<div class="kpi" ${c ? `style="--c:${c}"` : ""}><b>${n}</b><span>${t}</span></div>`;
+
+  app.innerHTML = `
+  <header class="barra">
+    <button class="icono" id="volver" aria-label="Volver">${I.back}</button>
+    <h1>Ajustes</h1><span></span>
+  </header>
+
+  <section class="tarjeta">
+    <h3>Resumen</h3>
+    <div class="kpis">
+      ${tarjetaNum(cuenta((p) => p.estado !== "realizado"), "Pendientes")}
+      ${tarjetaNum(cuenta((p) => (p.created_at || "").startsWith(mes)), "Entrados este mes")}
+      ${tarjetaNum(cuenta((p) => p.estado === "realizado" && (p.updated_at || "").startsWith(mes)), "Terminados este mes", "#16a34a")}
+    </div>
+    <div class="kpis">${ESTADOS.map((e) => tarjetaNum(cuenta((p) => p.estado === e.id), e.nombre, e.color)).join("")}</div>
+    <div class="dato-lista">${Object.entries(porAseg).sort((a, b) => b[1] - a[1]).map(([a, n]) => `<div class="dato"><span>${esc(a)}</span><b>${n}</b></div>`).join("") || '<p class="suave">Aún no hay partes.</p>'}</div>
+  </section>
+
+  <form id="fAjustes" class="form">
+    <section class="tarjeta">
+      <h3>Datos de la empresa (salen en el PDF)</h3>
+      <label>Nombre<input name="e_nombre" value="${esc(E.nombre)}"></label>
+      <div class="dos"><label>CIF<input name="e_cif" value="${esc(E.cif)}"></label><label>Teléfono<input name="e_telefono" type="tel" value="${esc(E.telefono)}"></label></div>
+      <label>Email<input name="e_email" type="email" value="${esc(E.email)}"></label>
+      <label>Dirección<input name="e_direccion" value="${esc(E.direccion)}"></label>
+    </section>
+    <section class="tarjeta">
+      <h3>A quién se envían los PDF</h3>
+      <div class="dos"><label>Nombre<input name="d_nombre" value="${esc(D.nombre)}"></label><label>WhatsApp<input name="d_telefono" type="tel" value="${esc(D.telefono)}"></label></div>
+    </section>
+    <section class="tarjeta">
+      <h3>Tarifa de precios</h3>
+      <a class="btn ancho" href="#/tarifa">📋 Ver y editar la tarifa (códigos y precios)</a>
+      <label>IVA que se suma a las valoraciones (%, 0 = sin IVA)<input name="iva" type="number" step="1" min="0" value="${CFG.IVA ?? 21}"></label>
+    </section>
+    <section class="tarjeta">
+      <h3>Aseguradoras del desplegable</h3>
+      <label>Una por línea<textarea name="aseguradoras" rows="7">${esc(CFG.ASEGURADORAS.join("\n"))}</textarea></label>
+    </section>
+    <section class="tarjeta">
+      <h3>Mensaje de WhatsApp al cliente</h3>
+      <label>Texto<textarea name="mensaje" rows="4">${esc(CFG.MENSAJE_CLIENTE)}</textarea></label>
+      <p class="suave">Puedes usar: {nombre} {empresa} {aseguradora} {expediente} {averia_corta}</p>
+    </section>
+    <div class="pie-form"><span></span><button type="submit" class="btn primario">Guardar ajustes</button></div>
+  </form>
+
+  <section class="tarjeta">
+    <div class="h3-fila"><h3>Usuarios</h3><button class="btn peq" id="nuevoUsuario">+ Añadir</button></div>
+    <div id="usuarios"><p class="suave">Cargando…</p></div>
+  </section>
+  <div style="height:40px"></div>`;
+
+  $("#volver").onclick = () => (location.hash = "/");
+  $("#fAjustes").addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    const f = Object.fromEntries(new FormData(ev.target));
+    const datos = {
+      EMPRESA: { nombre: f.e_nombre.trim(), cif: f.e_cif.trim(), telefono: f.e_telefono.trim(), email: f.e_email.trim(), direccion: f.e_direccion.trim() },
+      DESTINO_INFORMES: { nombre: f.d_nombre.trim(), telefono: f.d_telefono.replace(/\s/g, "") },
+      ASEGURADORAS: f.aseguradoras.split("\n").map((x) => x.trim()).filter(Boolean),
+      MENSAJE_CLIENTE: f.mensaje.trim(),
+      IVA: Number(f.iva) || 0,
+    };
+    if (!datos.ASEGURADORAS.includes("Otra")) datos.ASEGURADORAS.push("Otra");
+    await conCarga("Guardando…", () => api.guardarAjustes(datos));
+    ajustesCargados = false; await cargarAjustes();
+    toast("Ajustes guardados", "ok");
+  });
+  $("#nuevoUsuario").onclick = sheetNuevoUsuario;
+  pintarUsuarios();
+}
+
+async function pintarUsuarios() {
+  const cont = $("#usuarios");
+  if (!cont) return;
+  let lista;
+  try { lista = (await api.adminUsuarios("listar")).usuarios; }
+  catch (e) { cont.innerHTML = `<p class="suave">No se pudieron cargar: ${esc(e.message)}</p>`; return; }
+  cont.innerHTML = lista.map((u) => `
+    <div class="usuario" data-id="${u.id}">
+      <div><b>${esc(u.nombre || "(sin alta en el equipo)")}</b>${u.es_admin ? ' <span class="etq">admin</span>' : ""}<br>
+        <small class="suave">${esc(u.email)}${u.ultimo_acceso ? " · último acceso " + fFecha(u.ultimo_acceso) : ""}</small></div>
+      <button class="icono oscuro" data-acc="menu" aria-label="Opciones">${I.more}</button>
+    </div>`).join("");
+  $$(".usuario [data-acc=menu]", cont).forEach((b) => b.addEventListener("click", () => {
+    const u = lista.find((x) => x.id === b.closest(".usuario").dataset.id);
+    menuUsuarioAdmin(u);
+  }));
+}
+
+function sheetNuevoUsuario() {
+  const s = abrirSheet(`
+    <h2>Nuevo usuario</h2>
+    <form id="fUsuario" class="form">
+      <label>Nombre<input name="nombre" required></label>
+      <label>Email<input name="email" type="email" required autocomplete="off"></label>
+      <label>Contraseña (mínimo 8)<input name="password" type="text" minlength="8" required autocomplete="new-password"></label>
+      <label class="check"><input type="checkbox" name="es_admin"> Administrador (puede ver Ajustes)</label>
+      <p class="suave">Apunta la contraseña y dásela a esa persona. Podrá cambiarla desde su menú.</p>
+      <div class="pie-form"><button type="button" class="btn" data-cerrar>Cancelar</button><button class="btn primario">Crear</button></div>
+    </form>`);
+  $("#fUsuario", s).addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    const f = Object.fromEntries(new FormData(ev.target));
+    await conCarga("Creando…", () => api.adminUsuarios("crear", { nombre: f.nombre.trim(), email: f.email.trim(), password: f.password, es_admin: !!f.es_admin }));
+    cerrarSheet(); toast("Usuario creado", "ok");
+    S.miembros = await api.miembros().catch(() => S.miembros);
+    pintarUsuarios();
+  });
+}
+
+function menuUsuarioAdmin(u) {
+  const soyYo = u.id === S.yo.user_id;
+  const s = abrirSheet(`
+    <h2>${esc(u.nombre || u.email)}</h2>
+    <p class="suave">${esc(u.email)}</p>
+    <div class="lista-botones">
+      <button class="btn ancho" id="uNombre">Cambiar nombre</button>
+      <button class="btn ancho" id="uPw">Poner contraseña nueva</button>
+      ${soyYo ? "" : `<button class="btn ancho" id="uAdmin">${u.es_admin ? "Quitar administrador" : "Hacer administrador"}</button>`}
+      ${soyYo ? "" : '<button class="btn ancho peligro" id="uBorrar">Borrar usuario</button>'}
+      <button class="btn texto ancho" data-cerrar>Cerrar</button>
+    </div>`);
+  const fin = async (msg) => { cerrarSheet(); toast(msg, "ok"); S.miembros = await api.miembros().catch(() => S.miembros); pintarUsuarios(); };
+  $("#uNombre", s).onclick = async () => {
+    const n = prompt("Nombre", u.nombre || ""); if (!n) return;
+    await conCarga("Guardando…", () => api.adminUsuarios("editar", { id: u.id, nombre: n.trim() }));
+    fin("Nombre cambiado");
+  };
+  $("#uPw", s).onclick = async () => {
+    const pw = prompt("Contraseña nueva (mínimo 8 caracteres)"); if (!pw) return;
+    if (pw.length < 8) return toast("Mínimo 8 caracteres", "error");
+    await conCarga("Guardando…", () => api.adminUsuarios("password", { id: u.id, password: pw }));
+    fin("Contraseña cambiada");
+  };
+  $("#uAdmin", s)?.addEventListener("click", async () => {
+    await conCarga("Guardando…", () => api.adminUsuarios("editar", { id: u.id, es_admin: !u.es_admin }));
+    fin("Permisos cambiados");
+  });
+  $("#uBorrar", s)?.addEventListener("click", async () => {
+    if (!confirm(`¿Borrar a ${u.nombre || u.email}? Ya no podrá entrar. Sus partes se conservan.`)) return;
+    await conCarga("Borrando…", () => api.adminUsuarios("borrar", { id: u.id }));
+    fin("Usuario borrado");
+  });
 }
 
 // ------------------------------------------------------------------ Instalar como app

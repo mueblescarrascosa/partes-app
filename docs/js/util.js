@@ -127,3 +127,33 @@ export function toast(msg, tipo = "") {
   t.textContent = msg; t.className = "toast show " + tipo;
   clearTimeout(toastT); toastT = setTimeout(() => (t.className = "toast"), 3200);
 }
+
+// ---- Líneas de valoración / trabajos (códigos de tarifa)
+export const norm = (t) => String(t ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+export const importeLinea = (l) => Math.round((Number(l.cantidad) || 0) * (Number(l.precio) || 0) * (1 - (Number(l.dto) || 0) / 100) * 100) / 100;
+export function totalesLineas(lineas = [], ivaPct = 0) {
+  const base = Math.round(lineas.reduce((a, l) => a + importeLinea(l), 0) * 100) / 100;
+  const iva = Math.round(base * (Number(ivaPct) || 0)) / 100;
+  return { base, iva, total: Math.round((base + iva) * 100) / 100 };
+}
+export function buscarEnTarifa(tarifa, q, max = 40) {
+  const t = norm(q).trim();
+  if (!t) return [];
+  const pals = t.split(/\s+/);
+  return tarifa.filter((c) => c.activo !== false).map((c) => {
+    const cod = norm(c.codigo), d = norm(c.descripcion + " " + (c.categoria || ""));
+    let score = 0;
+    if (cod === t) score = 100;
+    else if (cod.startsWith(t)) score = 50;
+    else if (pals.every((w) => d.includes(w) || cod.startsWith(w))) score = 10;
+    return { c, score };
+  }).filter((x) => x.score).sort((a, b) => b.score - a.score || (a.c.orden ?? 0) - (b.c.orden ?? 0)).slice(0, max).map((x) => x.c);
+}
+
+/** Para códigos "1ª Ud." devuelve el código de "Ud. adicional" que le sigue en la tarifa (o null) */
+export function codigoAdicional(tarifa, codigo) {
+  const c = tarifa.find((x) => x.codigo === codigo);
+  if (!c || !/\b1\s*(ª|a)?\s*(ud|unidad)/i.test(c.descripcion)) return null;
+  const sig = tarifa.filter((x) => (x.orden ?? 0) > (c.orden ?? 0)).sort((a, b) => a.orden - b.orden)[0];
+  return sig && /adicional/i.test(sig.descripcion) ? sig : null;
+}

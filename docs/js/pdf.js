@@ -1,5 +1,5 @@
 // Genera el PDF del informe final para el tramitador
-import { ESTADOS, fFecha, fFechaHora, fEuros, blobADataURL, medirImagen } from "./util.js";
+import { ESTADOS, fFecha, fFechaHora, fEuros, blobADataURL, medirImagen, importeLinea, totalesLineas } from "./util.js";
 
 export async function generarInforme(parte, api, miembros = []) {
   const { jsPDF } = window.jspdf;
@@ -19,8 +19,9 @@ export async function generarInforme(parte, api, miembros = []) {
   doc.setFont("helvetica", "bold"); doc.setFontSize(15);
   doc.text(E.nombre || "Informe de trabajo", M, 13);
   doc.setFont("helvetica", "normal"); doc.setFontSize(8.5);
-  const contacto = [E.cif && `CIF ${E.cif}`, E.telefono, E.email, E.direccion].filter(Boolean).join("  ·  ");
+  const contacto = [E.cif && `CIF ${E.cif}`, E.telefono, E.email].filter(Boolean).join("  ·  ");
   if (contacto) doc.text(contacto, M, 19);
+  if (E.direccion) doc.text(E.direccion, M, 24);
   doc.setFont("helvetica", "bold"); doc.setFontSize(10);
   const esFinal = parte.estado === "realizado";
   doc.text(esFinal ? "INFORME DE TRABAJO REALIZADO" : "INFORME DE VISITA", W - M, 13, { align: "right" });
@@ -73,7 +74,51 @@ export async function generarInforme(parte, api, miembros = []) {
   parrafo(parte.averia || "—");
   y += 2;
 
-  if (parte.importe_valorado != null || parte.importe_autorizado != null) {
+  // ---- Líneas de tarifa
+  const lineasFinal = (parte.lineas_realizadas || []).length ? parte.lineas_realizadas : parte.lineas_valoracion || [];
+  const lineas = esFinal ? lineasFinal : parte.lineas_valoracion || [];
+  if (lineas.length) {
+    titulo(esFinal && (parte.lineas_realizadas || []).length ? "Trabajos realizados" : "Valoración", 20);
+    const cols = [
+      { t: "Código", w: 16, a: "left" }, { t: "Descripción", w: 88, a: "left" }, { t: "Cant.", w: 14, a: "right" },
+      { t: "Precio", w: 22, a: "right" }, { t: "Dto", w: 14, a: "right" }, { t: "Importe", w: 26, a: "right" },
+    ];
+    const xs = []; let xx = M; cols.forEach((c) => { xs.push(xx); xx += c.w; });
+    const celda = (txt, i, yy) => {
+      const c = cols[i];
+      doc.text(txt, c.a === "right" ? xs[i] + c.w - 1 : xs[i] + 1, yy, { align: c.a });
+    };
+    doc.setFillColor(241, 245, 249); doc.rect(M, y - 4, AN, 6, "F");
+    doc.setFont("helvetica", "bold"); doc.setFontSize(8.5); doc.setTextColor(71, 85, 105);
+    cols.forEach((c, i) => celda(c.t, i, y));
+    y += 5; doc.setFont("helvetica", "normal"); doc.setTextColor(20);
+    for (const l of lineas) {
+      doc.setFontSize(8.5);
+      const desc = doc.splitTextToSize(String(l.descripcion || ""), cols[1].w - 2);
+      const h = Math.max(1, desc.length) * 3.8 + 1.5;
+      salto(h + 2);
+      celda(String(l.codigo || ""), 0, y);
+      doc.text(desc, xs[1] + 1, y);
+      celda(String(Number(l.cantidad).toLocaleString("es-ES")), 2, y);
+      celda(fEuros(l.precio), 3, y);
+      celda(Number(l.dto) ? `${Number(l.dto)}%` : "", 4, y);
+      celda(fEuros(importeLinea(l)), 5, y);
+      y += h;
+      doc.setDrawColor(226, 232, 240); doc.line(M, y - 3, M + AN, y - 3);
+    }
+    const iva = window.APP_CONFIG.IVA || 0;
+    const t = totalesLineas(lineas, iva);
+    salto(20); y += 2;
+    const filaT = (k, v, negrita) => {
+      doc.setFont("helvetica", negrita ? "bold" : "normal"); doc.setFontSize(negrita ? 10.5 : 9.5);
+      doc.text(k, M + AN - 32, y, { align: "right" }); doc.text(v, M + AN - 1, y, { align: "right" }); y += 5;
+    };
+    if (iva) { filaT("Base imponible", fEuros(t.base)); filaT(`IVA ${iva}%`, fEuros(t.iva)); filaT("TOTAL", fEuros(t.total), true); }
+    else filaT("TOTAL (sin IVA)", fEuros(t.base), true);
+    doc.setFont("helvetica", "normal"); y += 3;
+  }
+
+  if (!lineas.length && (parte.importe_valorado != null || parte.importe_autorizado != null)) {
     titulo("Importes");
     fila("Valorado", fEuros(parte.importe_valorado));
     fila("Autorizado", fEuros(parte.importe_autorizado));
