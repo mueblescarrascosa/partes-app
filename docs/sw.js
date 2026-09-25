@@ -1,5 +1,5 @@
 // Service worker: permite instalar la app y abrirla sin conexión (la última versión cargada).
-const CACHE = "partes-v3";
+const CACHE = "partes-v4";
 const BASE = ["./", "index.html", "styles.css", "js/app.js", "js/api.js", "js/util.js", "js/pdf.js", "js/config.js",
 "manifest.webmanifest", "icons/icon-192.png"];
 
