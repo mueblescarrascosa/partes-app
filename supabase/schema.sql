@@ -69,8 +69,8 @@ create table if not exists public.partes (
   datos_ia            jsonb   -- respuesta bruta de la IA (por si hay que revisar)
 );
 
-create unique index if not exists partes_aseg_exp_uq
-  on public.partes (lower(aseguradora), expediente) where expediente is not null and expediente <> '';
+-- (Antes era único; ahora se permiten partes repetidos con cambios, enlazados con repetido_de)
+create index if not exists partes_aseg_exp_idx on public.partes (lower(aseguradora), expediente);
 create index if not exists partes_estado_idx on public.partes (estado);
 create index if not exists partes_updated_idx on public.partes (updated_at desc);
 
@@ -190,3 +190,9 @@ create policy ajustes_admin_upd on public.ajustes for update to authenticated us
 
 -- ---------- Papelera ----------
 alter table public.partes add column if not exists borrado_at timestamptz;
+
+-- ---------- Partes repetidos con cambios ----------
+drop index if exists public.partes_aseg_exp_uq;
+create index if not exists partes_aseg_exp_idx on public.partes (lower(aseguradora), expediente);
+alter table public.partes add column if not exists repetido_de uuid references public.partes(id) on delete set null;
+alter table public.partes add column if not exists cambios_repetido text;
