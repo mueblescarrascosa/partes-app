@@ -56,7 +56,7 @@ function crearApiSupabase() {
     },
     async buscarDuplicado(aseguradora, expediente) {
       if (!expediente) return null;
-      const r = ok(await sb.from("partes").select("id,nombre,estado,borrado_at").ilike("aseguradora", aseguradora).eq("expediente", expediente).limit(1));
+      const r = ok(await sb.from("partes").select("*").ilike("aseguradora", aseguradora).eq("expediente", expediente).order("created_at", { ascending: false }).limit(1));
       return r[0] ?? null;
     },
     async crearParte(p) { return ok(await sb.from("partes").insert(p).select().single()); },

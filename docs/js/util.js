@@ -255,3 +255,18 @@ export function linkCalendario(p) {
   });
   return "https://calendar.google.com/calendar/render?" + q.toString();
 }
+
+// ---------- Zonas
+export const sinAcentos = (t) => String(t ?? "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+const limpiaZ = (t) => " " + sinAcentos(t).replace(/[^a-z0-9ñ]+/g, " ").trim() + " ";
+// Devuelve el nombre de la zona del parte según su población (o, si no, su dirección). "" si no encaja en ninguna.
+export function zonaDe(p, zonas = window.APP_CONFIG?.ZONAS || []) {
+  const pares = zonas.flatMap((z) => (z.pueblos || []).map((pu) => [limpiaZ(pu), z.nombre])).filter(([n]) => n.trim())
+    .sort((a, b) => b[0].length - a[0].length);
+  for (const txt of [limpiaZ(p.poblacion), limpiaZ([p.direccion, p.poblacion, p.provincia].join(" "))]) {
+    if (!txt.trim()) continue;
+    const hit = pares.find(([n]) => txt.includes(n));
+    if (hit) return hit[1];
+  }
+  return "";
+}

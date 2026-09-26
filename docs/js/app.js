@@ -2,7 +2,7 @@ import { api } from "./api.js";
 import {
   $, $$, esc, ESTADOS, estadoInfo, idxEstado, colorAseg, linkLlamar, linkWhatsApp, linkMapa,
   fFecha, fFechaHora, fEuros, hace, toLocalInput, blobABase64, comprimirImagen, panelFirma, toast,
-  importeLinea, totalesLineas, buscarEnTarifa, codigoAdicional, chipDias, recortarImagen, linkCalendario, diasParte,
+  importeLinea, totalesLineas, buscarEnTarifa, codigoAdicional, chipDias, recortarImagen, linkCalendario, diasParte, zonaDe,
 } from "./util.js";
 import { generarInforme } from "./pdf.js";
 
@@ -21,6 +21,7 @@ async function cargarAjustes() {
     if (a.MENSAJE_CLIENTE) CFG.MENSAJE_CLIENTE = a.MENSAJE_CLIENTE;
     if (a.IVA != null && a.IVA !== "") CFG.IVA = Number(a.IVA);
     if (a.WHATSAPP_APP) CFG.WHATSAPP_APP = a.WHATSAPP_APP;
+    if (Array.isArray(a.ZONAS)) CFG.ZONAS = a.ZONAS;
     ajustesCargados = true;
   } catch { /* se usan los valores de config.js */ }
 }
@@ -28,7 +29,7 @@ const app = $("#app");
 const S = {
   yo: null, miembros: [], partes: [],
   filtro: sessionGet("filtro") ?? "activos", busqueda: "", soloMios: sessionGet("soloMios") === "1",
-  orden: sessionGet("orden") ?? "recientes", filtroAseg: sessionGet("filtroAseg") ?? "",
+  orden: sessionGet("orden") ?? "recientes", filtroAseg: sessionGet("filtroAseg") ?? "", filtroZona: sessionGet("filtroZona") ?? "", fx: (() => { try { return JSON.parse(sessionGet("fx") || "{}"); } catch { return {}; } })(),
   borrador: null, // parte nuevo pendiente de guardar {datos, archivo, mime}
 };
 
@@ -100,6 +101,7 @@ async function router() {
   if (ruta === "editar" && id) return vistaFormulario(id);
   if (ruta === "lineas" && id) return vistaLineas(id, h.split("/")[3] || "valoracion");
   if (ruta === "papelera") return vistaPapelera();
+  if (ruta === "compartido") return vistaCompartido();
   if (ruta === "tarifa") return S.yo?.es_admin ? vistaTarifa() : (location.hash = "/");
   if (ruta === "ajustes") return S.yo?.es_admin ? vistaAjustes() : (location.hash = "/");
   location.hash = "/";
@@ -160,17 +162,22 @@ async function vistaLista() {
   <div class="filtros">
     <label class="solo-mios"><input type="checkbox" id="soloMios" ${S.soloMios ? "checked" : ""}> Solo míos</label>
     <select id="fAseg"><option value="">Todas las aseguradoras</option>${[...new Set(S.partes.map((p) => p.aseguradora).concat(CFG.ASEGURADORAS))].filter((a) => a && a !== "Otra").map((a) => `<option ${a === S.filtroAseg ? "selected" : ""}>${esc(a)}</option>`).join("")}</select>
+    <select id="fZona"><option value="">Todas las zonas</option>${(CFG.ZONAS || []).map((z) => `<option ${z.nombre === S.filtroZona ? "selected" : ""}>${esc(z.nombre)}</option>`).join("")}<option value="-" ${S.filtroZona === "-" ? "selected" : ""}>Sin zona</option></select>
     <select id="orden">
       ${[["recientes", "Últimos movidos"], ["antiguos", "Más días primero"], ["cita", "Próxima cita"], ["nuevos", "Últimos entrados"]].map(([v, t]) => `<option value="${v}" ${S.orden === v ? "selected" : ""}>${t}</option>`).join("")}
     </select>
+    <button class="btn peq" id="btnFiltros">⚙️ Más filtros<b id="nFiltros"></b></button>
   </div>
+  <div class="filtros-activos" id="fActivos"></div>
   <main id="lista" class="lista"><div class="vacio">Cargando…</div></main>
   <button class="fab" id="nuevo" aria-label="Nuevo parte">${I.plus}</button>`;
 
   $("#busca").addEventListener("input", (e) => { S.busqueda = e.target.value; pintarLista(); });
   $("#soloMios").addEventListener("change", (e) => { S.soloMios = e.target.checked; sessionSet("soloMios", S.soloMios ? "1" : "0"); pintarLista(); });
   $("#fAseg").addEventListener("change", (e) => { S.filtroAseg = e.target.value; sessionSet("filtroAseg", S.filtroAseg); pintarLista(); });
+  $("#fZona").addEventListener("change", (e) => { S.filtroZona = e.target.value; sessionSet("filtroZona", S.filtroZona); pintarLista(); });
   $("#orden").addEventListener("change", (e) => { S.orden = e.target.value; sessionSet("orden", S.orden); pintarLista(); });
+  $("#btnFiltros").addEventListener("click", sheetFiltros);
   $("#nuevo").addEventListener("click", menuNuevo);
   $("#recargar").addEventListener("click", cargarPartes);
   $("#menuUsuario").addEventListener("click", menuUsuario);
@@ -189,6 +196,9 @@ function pintarLista() {
   let base = S.partes;
   if (S.soloMios) base = base.filter((p) => p.asignado_a === S.yo.user_id);
   if (S.filtroAseg) base = base.filter((p) => p.aseguradora === S.filtroAseg);
+  if (S.filtroZona) base = base.filter((p) => (zonaDe(p) || "-") === S.filtroZona);
+  base = base.filter(pasaFiltrosExtra);
+  pintarFiltrosActivos();
   if (q) base = base.filter((p) =>
     [p.nombre, p.expediente, p.num_encargo, p.num_siniestro, p.direccion, p.poblacion, p.telefono, p.aseguradora, p.averia, p.poliza]
       .some((v) => String(v ?? "").toLowerCase().includes(q)));
@@ -227,6 +237,95 @@ function pintarLista() {
   }));
 }
 
+// ------------------------------------------------------------------ Más filtros
+const hoyISO = () => new Date().toISOString().slice(0, 10);
+const inicioDia = (d = new Date()) => { const x = new Date(d); x.setHours(0, 0, 0, 0); return x; };
+const FILTROS_EXTRA = {
+  tecnico: { t: "Técnico", op: () => [["-", "Sin asignar"], ...S.miembros.map((m) => [m.user_id, m.nombre])],
+    fn: (p, v) => (v === "-" ? !p.asignado_a : p.asignado_a === v) },
+  dias: { t: "Antigüedad", op: () => [["7", "Más de 7 días"], ["15", "Más de 15 días"], ["30", "Más de 30 días"], ["60", "Más de 60 días (atascados)"]],
+    fn: (p, v) => diasParte(p) > Number(v) },
+  entrada: { t: "Entrada", op: () => [["hoy", "Hoy"], ["7", "Últimos 7 días"], ["mes", "Este mes"], ["mesant", "Mes pasado"]],
+    fn: (p, v) => {
+      const c = new Date(p.created_at), hoy = inicioDia();
+      if (v === "hoy") return c >= hoy;
+      if (v === "7") return c >= new Date(hoy - 6 * 864e5);
+      const m0 = new Date(hoy.getFullYear(), hoy.getMonth(), 1);
+      if (v === "mes") return c >= m0;
+      const m1 = new Date(hoy.getFullYear(), hoy.getMonth() - 1, 1);
+      return c >= m1 && c < m0;
+    } },
+  cita: { t: "Cita", op: () => [["hoy", "Hoy"], ["manana", "Mañana"], ["semana", "Próximos 7 días"], ["pasada", "Cita pasada sin visitar"], ["sin", "Contactado sin cita"]],
+    fn: (p, v) => {
+      const hoy = inicioDia(), f = p.fecha_cita ? new Date(p.fecha_cita) : null;
+      if (v === "sin") return p.estado === "contactado" && !f;
+      if (!f) return false;
+      if (v === "hoy") return f >= hoy && f < new Date(+hoy + 864e5);
+      if (v === "manana") return f >= new Date(+hoy + 864e5) && f < new Date(+hoy + 2 * 864e5);
+      if (v === "semana") return f >= hoy && f < new Date(+hoy + 7 * 864e5);
+      if (v === "pasada") return f < hoy && idxEstado(p.estado) < idxEstado("visitado");
+      return true;
+    } },
+  falta: { t: "Le falta", op: () => [["telefono", "Teléfono"], ["direccion", "Dirección o población"], ["contactar", "Contactar (recibido hace más de 2 días)"],
+      ["valorar", "Valoración (visitado sin valorar)"], ["autorizar", "Autorización (valorado hace más de 7 días)"], ["terminar", "Terminar (autorizado)"]],
+    fn: (p, v) => {
+      if (v === "telefono") return !/\d{9}/.test(String(p.telefono || "").replace(/\D/g, ""));
+      if (v === "direccion") return !p.direccion || !p.poblacion;
+      if (v === "contactar") return p.estado === "recibido" && diasParte(p) > 2;
+      if (v === "valorar") return p.estado === "visitado" && !(p.lineas_valoracion || []).length && p.importe_valorado == null;
+      if (v === "autorizar") return p.estado === "valorado" && (Date.now() - new Date(p.updated_at)) / 864e5 > 7;
+      if (v === "terminar") return p.estado === "autorizado";
+      return true;
+    } },
+  importe: { t: "Importe valorado", op: () => [["0-300", "Hasta 300 €"], ["300-1000", "300 € a 1.000 €"], ["1000-", "Más de 1.000 €"], ["sin", "Sin importe"]],
+    fn: (p, v) => {
+      const i = p.importe_valorado;
+      if (v === "sin") return i == null;
+      if (i == null) return false;
+      const [a, b] = v.split("-").map((x) => (x === "" ? Infinity : Number(x)));
+      return i >= a && i < b;
+    } },
+  otros: { t: "Otros", op: () => [["repetidos", "Solo repetidos"], ["norepetidos", "Sin repetidos"]],
+    fn: (p, v) => {
+      if (v === "repetidos") return !!p.repetido_de;
+      if (v === "norepetidos") return !p.repetido_de;
+      return true;
+    } },
+};
+function pasaFiltrosExtra(p) {
+  return Object.entries(S.fx || {}).every(([k, v]) => !v || !FILTROS_EXTRA[k] || FILTROS_EXTRA[k].fn(p, v));
+}
+function guardarFx() { sessionSet("fx", JSON.stringify(S.fx)); }
+function pintarFiltrosActivos() {
+  const cont = $("#fActivos"); if (!cont) return;
+  const act = Object.entries(S.fx || {}).filter(([k, v]) => v && FILTROS_EXTRA[k]);
+  $("#nFiltros").textContent = act.length ? " " + act.length : "";
+  cont.innerHTML = act.map(([k, v]) => {
+    const f = FILTROS_EXTRA[k], t = (f.op().find(([x]) => x === v) || [v, v])[1];
+    return `<button class="chip activo peq-chip" data-quitar="${k}">${esc(f.t)}: ${esc(t)} ✕</button>`;
+  }).join("") + (act.length > 1 ? '<button class="chip peq-chip" data-quitar="*">Quitar todos</button>' : "");
+  $$("[data-quitar]", cont).forEach((b) => b.onclick = () => {
+    if (b.dataset.quitar === "*") S.fx = {}; else delete S.fx[b.dataset.quitar];
+    guardarFx(); pintarLista();
+  });
+}
+function sheetFiltros() {
+  const s = abrirSheet(`
+    <h2>Más filtros</h2>
+    <div class="form-filtros">
+      ${Object.entries(FILTROS_EXTRA).map(([k, f]) => `
+        <label>${esc(f.t)}<select data-fx="${k}"><option value="">— Todos —</option>
+          ${f.op().map(([v, t]) => `<option value="${esc(v)}" ${S.fx[k] === v ? "selected" : ""}>${esc(t)}</option>`).join("")}
+        </select></label>`).join("")}
+    </div>
+    <p class="suave" id="fxCuenta"></p>
+    <div class="pie-form"><button class="btn" id="fxLimpiar">Quitar filtros</button><button class="btn primario" data-cerrar>Ver resultados</button></div>`);
+  const cuenta = () => { pintarLista(); $("#fxCuenta", s).textContent = `${$$("#lista .parte").length} partes con estos filtros`; };
+  $$("[data-fx]", s).forEach((sel) => sel.addEventListener("change", () => { S.fx[sel.dataset.fx] = sel.value; if (!sel.value) delete S.fx[sel.dataset.fx]; guardarFx(); cuenta(); }));
+  $("#fxLimpiar", s).onclick = () => { S.fx = {}; guardarFx(); $$("[data-fx]", s).forEach((x) => (x.value = "")); cuenta(); };
+  cuenta();
+}
+
 function tarjetaParte(p) {
   const e = estadoInfo(p.estado);
   const asignado = S.miembros.find((m) => m.user_id === p.asignado_a)?.nombre;
@@ -235,11 +334,12 @@ function tarjetaParte(p) {
     <div class="parte-top">
       <span class="aseg">${esc(p.aseguradora)}</span>
       <span class="exp">${esc(p.expediente || "sin nº")}</span>
+      ${p.repetido_de ? '<span class="rep-badge" title="Parte repetido con cambios">🔁 Repetido</span>' : ""}
       ${chipDias(p)}
       <span class="estado" style="--c:${e.color}">${e.nombre}</span>
     </div>
     <div class="parte-nombre">${esc(p.nombre || "Sin nombre")}</div>
-    <div class="parte-dir">${esc([p.direccion, p.poblacion].filter(Boolean).join(", "))}</div>
+    <div class="parte-dir">${esc([p.direccion, p.poblacion].filter(Boolean).join(", "))}${zonaDe(p) ? ` <span class="zona">${esc(zonaDe(p))}</span>` : ""}</div>
     ${p.averia ? `<div class="parte-averia">${esc(p.averia)}</div>` : ""}
     ${p.importe_valorado != null ? `<div class="parte-importe">Valoración: <b>${fEuros(p.importe_valorado)}</b>${p.importe_autorizado != null ? ` · Autorizado: <b>${fEuros(p.importe_autorizado)}</b>` : ""}</div>` : ""}
     <div class="parte-pie">
@@ -295,6 +395,7 @@ function descargar(blob, nombre) {
 
 // ------------------------------------------------------------------ Nuevo parte: escanear
 function menuNuevo() {
+  S.fotosPendientes = null;
   const s = abrirSheet(`
     <h2>Nuevo parte</h2>
     <div class="lista-botones">
@@ -333,6 +434,228 @@ async function procesarArchivo(file) {
     S.borrador = { datos: {}, archivo: blob, mime };
     irANuevo();
   } finally { cargando(false); }
+}
+
+// ------------------------------------------------------------------ Archivos compartidos desde WhatsApp u otras apps
+async function leerCompartidos() {
+  if (!("caches" in window)) return [];
+  const c = await caches.open("partes-compartido");
+  const files = [];
+  for (const req of await c.keys()) {
+    const r = await c.match(req);
+    if (!r) continue;
+    const blob = await r.blob();
+    const nombre = decodeURIComponent(r.headers.get("x-nombre") || "archivo");
+    files.push(new File([blob], nombre, { type: r.headers.get("content-type") || blob.type }));
+    await c.delete(req);
+  }
+  return files;
+}
+
+async function vistaCompartido() {
+  const nuevos = await leerCompartidos();
+  if (nuevos.length) S.compartidos = nuevos;
+  const files = S.compartidos || [];
+  history.replaceState(null, "", location.pathname + "#/");
+  await vistaLista();
+  if (!files.length) return toast("No ha llegado ningún archivo. Vuelve a compartirlo.", "error");
+  const esPDF = (f) => f.type === "application/pdf" || /\.pdf$/i.test(f.name);
+  const imgs = files.filter((f) => !esPDF(f) && /^image\//.test(f.type || "image/"));
+  const s = abrirSheet(`
+    <h2>Archivos recibidos</h2>
+    <p>Has compartido <b>${files.length}</b> ${files.length === 1 ? "archivo" : "archivos"}${imgs.length && imgs.length !== files.length ? ` (${imgs.length} fotos)` : ""}. ¿Qué quieres hacer?</p>
+    <div class="lista-botones">
+      <button class="btn grande" id="cNuevo">${I.file}<span><b>Nuevo parte</b><small>Leer ${files.length > 1 ? "el primero" : "el documento"} con IA${files.length > 1 && imgs.length > 1 ? " (las demás fotos se añaden al guardar)" : ""}</small></span></button>
+      ${imgs.length ? `<button class="btn grande" id="cFotos">${I.cam}<span><b>Añadir ${imgs.length === 1 ? "la foto" : "las " + imgs.length + " fotos"} a un parte</b><small>Fotos del daño o del trabajo terminado</small></span></button>` : ""}
+    </div>`);
+  $("#cNuevo", s).onclick = () => {
+    cerrarSheet();
+    const [primero, ...resto] = files;
+    S.fotosPendientes = resto.filter((f) => imgs.includes(f));
+    S.compartidos = null;
+    procesarArchivo(primero);
+  };
+  $("#cFotos", s)?.addEventListener("click", () => elegirParteParaFotos(imgs));
+}
+
+function elegirParteParaFotos(imgs) {
+  const sin = (t) => String(t || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+  const s = abrirSheet(`
+    <h2>¿A qué parte?</h2>
+    <input type="search" id="bParte" placeholder="Buscar por nombre, expediente, dirección…" autocomplete="off">
+    <div id="lParte" class="lista-elegir"></div>`);
+  const pinta = () => {
+    const q = sin($("#bParte", s).value);
+    const lista = (S.partes || []).filter((p) => !q || sin([p.nombre, p.expediente, p.direccion, p.poblacion, p.aseguradora].join(" ")).includes(q)).slice(0, 30);
+    $("#lParte", s).innerHTML = lista.length ? lista.map((p) => `
+      <button class="btn fila-elegir" data-id="${p.id}">
+        <b>${esc(p.nombre || "Sin nombre")}</b>
+        <small>${esc(p.aseguradora || "")}${p.expediente ? " · " + esc(p.expediente) : ""}${p.direccion ? " · " + esc(p.direccion) : ""}</small>
+      </button>`).join("") : '<p class="vacio">No hay partes que coincidan.</p>';
+  };
+  $("#bParte", s).addEventListener("input", pinta);
+  $("#lParte", s).addEventListener("click", async (ev) => {
+    const b = ev.target.closest("[data-id]"); if (!b) return;
+    const p = S.partes.find((x) => x.id === b.dataset.id); if (!p) return;
+    const tipo = idxEstado(p.estado) >= idxEstado("autorizado") ? "despues" : "antes";
+    cerrarSheet();
+    try {
+      await subirFotos(p, imgs, tipo);
+      S.compartidos = null;
+      toast(`${imgs.length === 1 ? "Foto añadida" : imgs.length + " fotos añadidas"} al parte`, "ok");
+      location.hash = "/parte/" + p.id;
+    } catch (e) { toast("No se pudieron subir: " + e.message, "error"); }
+    finally { cargando(false); }
+  });
+  pinta();
+  setTimeout(() => $("#bParte", s).focus(), 200);
+}
+
+// ------------------------------------------------------------------ Partes repetidos
+const CAMPOS_TXT = {
+  expediente: "expediente", num_encargo: "nº encargo", num_siniestro: "nº siniestro", poliza: "póliza", fecha_encargo: "fecha encargo",
+  nombre: "nombre", direccion: "dirección", codigo_postal: "C.P.", poblacion: "población", provincia: "provincia",
+  telefono: "teléfono", telefono2: "teléfono 2", averia: "avería", tramitador_nombre: "tramitador",
+  tramitador_telefono: "tel. tramitador", tramitador_email: "email tramitador",
+};
+const normRef = (x) => String(x ?? "").replace(/[\s.\-\/]/g, "").toUpperCase();
+
+async function buscarRepetidos(d) {
+  let lista = S.partes?.length ? S.partes : [];
+  if (!lista.length) { try { lista = S.partes = await api.listarPartes(); } catch { lista = []; } }
+  const res = new Map();
+  const add = (x, motivo, fuerte) => { const r = res.get(x.id); if (!r || (fuerte && !r.fuerte)) res.set(x.id, { p: x, motivo, fuerte }); };
+  const exp = normRef(d.expediente), enc = normRef(d.num_encargo), sin = normRef(d.num_siniestro);
+  const tel = String(d.telefono || "").replace(/\D/g, "").slice(-9);
+  for (const x of lista) {
+    if (exp && exp.length >= 5 && [x.expediente, x.num_siniestro].some((v) => normRef(v) === exp)) add(x, "mismo expediente", true);
+    else if (enc && enc.length >= 5 && normRef(x.num_encargo) === enc) add(x, "mismo nº de encargo", true);
+    else if (sin && sin.length >= 5 && [x.expediente, x.num_siniestro].some((v) => normRef(v) === sin)) add(x, "mismo nº de siniestro", true);
+    else if (tel.length === 9 && [x.telefono, x.telefono2].some((v) => String(v || "").replace(/\D/g, "").slice(-9) === tel)) add(x, "mismo teléfono", false);
+  }
+  if (d.aseguradora && d.expediente) {
+    try {
+      const dup = await api.buscarDuplicado(d.aseguradora, d.expediente);
+      if (dup?.borrado_at) add({ ...dup, aseguradora: d.aseguradora, expediente: d.expediente }, "mismo expediente (en la papelera)", true);
+    } catch { /* nada */ }
+  }
+  return [...res.values()].sort((a, b) => b.fuerte - a.fuerte).slice(0, 3);
+}
+
+// Compara un parte nuevo con uno existente. Solo cuenta como cambio lo que tiene valor en los dos.
+const limpiaTxt = (t) => String(t ?? "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/[^a-z0-9ñ]+/g, " ").trim();
+function mismaAveria(a, b) {
+  const pal = (t) => new Set(limpiaTxt(t).split(" ").filter((w) => w.length >= 4));
+  const A = pal(a), B = pal(b);
+  if (!A.size || !B.size) return limpiaTxt(a) === limpiaTxt(b);
+  let c = 0; for (const w of A) if (B.has(w)) c++;
+  return c / Math.min(A.size, B.size) >= 0.6;
+}
+function compararPartes(n, v) {
+  const diffs = [], faltan = [];
+  const reglas = {
+    expediente: [(a, b) => normRef(a) === normRef(b), false],
+    num_encargo: [(a, b) => normRef(a) === normRef(b), true],
+    num_siniestro: [(a, b) => normRef(a) === normRef(b), true],
+    fecha_encargo: [(a, b) => String(a).slice(0, 10) === String(b).slice(0, 10), true],
+    averia: [mismaAveria, true],
+    telefono: [(a, b) => String(a).replace(/\D/g, "").slice(-9) === String(b).replace(/\D/g, "").slice(-9), false],
+    direccion: [(a, b) => { const x = limpiaTxt(a), y = limpiaTxt(b); return x === y || x.includes(y) || y.includes(x); }, false],
+    nombre: [(a, b) => { const x = limpiaTxt(a), y = limpiaTxt(b); return x === y || x.includes(y) || y.includes(x); }, false],
+  };
+  for (const [k, [igual, trabajo]] of Object.entries(reglas)) {
+    const a = String(n[k] ?? "").trim(), b = String(v[k] ?? "").trim();
+    if (!a) continue;
+    if (!b) { faltan.push(k); continue; }
+    if (!igual(a, b)) diffs.push({ k, trabajo, txt: k === "averia" ? "descripción distinta" : `${CAMPOS_TXT[k]} ${k === "fecha_encargo" ? fFecha(a) : a} (antes ${k === "fecha_encargo" ? fFecha(b) : b})` });
+  }
+  return { diffs, faltan, identico: !diffs.length };
+}
+
+// Busca el parte "original" más parecido (mismo expediente / encargo / siniestro) y lo compara.
+async function analizarRepeticion(d) {
+  const reps = (await buscarRepetidos(d)).filter((r) => r.fuerte);
+  if (!reps.length) return null;
+  const cands = reps.map((r) => ({ ...r, cmp: compararPartes(d, r.p) }))
+    .sort((a, b) => (normRef(b.p.aseguradora) === normRef(d.aseguradora)) - (normRef(a.p.aseguradora) === normRef(d.aseguradora))
+      || b.cmp.identico - a.cmp.identico || a.cmp.diffs.length - b.cmp.diffs.length);
+  const c = cands[0];
+  return { orig: c.p, motivo: c.motivo, ...c.cmp };
+}
+
+async function avisoRepetido(d) {
+  const [rep, todos] = await Promise.all([analizarRepeticion(d), buscarRepetidos(d)]);
+  const form = $("#fParte");
+  if (!form) return;
+  $(".aviso.repetido")?.remove();
+  const debiles = todos.filter((r) => !r.fuerte);
+  if (!rep && !debiles.length) return;
+  const div = document.createElement("div");
+  div.className = "aviso repetido";
+  const filaP = (x, extra) => `
+      <div class="rep-fila">
+        <div><b>${esc(x.nombre || "Sin nombre")}</b><small>${esc(x.aseguradora || "")}${x.expediente ? " · " + esc(x.expediente) : ""}${x.num_encargo ? " · enc. " + esc(x.num_encargo) : ""} · ${esc(x.borrado_at ? "en la papelera" : estadoInfo(x.estado).nombre)}${extra ? " — " + esc(extra) : ""}</small></div>
+        <div class="rep-botones"><button type="button" class="btn" data-abrir="${x.id}">Abrir</button></div>
+      </div>`;
+  let html = "";
+  if (rep?.identico) {
+    html = `<b>⛔ Este parte ya lo tienes (es igual)</b>${filaP(rep.orig, rep.motivo)}
+      <small>No se guardará otro igual.${rep.faltan.length ? ` El nuevo trae datos que faltan en el que tienes (${rep.faltan.map((k) => CAMPOS_TXT[k]).join(", ")}).` : ""}</small>
+      ${rep.faltan.length ? `<button type="button" class="btn primario" data-act="${rep.orig.id}">Completar el que ya tengo</button>` : ""}`;
+  } else if (rep) {
+    html = `<b>🔁 Parte repetido con cambios</b>${filaP(rep.orig, rep.motivo)}
+      <ul class="rep-cambios">${rep.diffs.map((x) => `<li>${esc(x.txt)}</li>`).join("")}</ul>
+      <small>Al guardar se creará como <b>parte nuevo marcado "Repetido"</b> y enlazado al anterior.</small>
+      <button type="button" class="btn" data-act="${rep.orig.id}">No, actualizar el anterior en su lugar</button>`;
+  }
+  if (debiles.length && !(rep && debiles.every((r) => r.p.id === rep.orig.id))) {
+    html += `<b style="margin-top:6px">ℹ️ Mismo teléfono que:</b>${debiles.filter((r) => r.p.id !== rep?.orig.id).map((r) => filaP(r.p, "")).join("")}`;
+  }
+  div.innerHTML = html;
+  form.before(div);
+  div.addEventListener("click", (ev) => {
+    const a = ev.target.closest("[data-abrir]"), u = ev.target.closest("[data-act]");
+    if (a) { S.borrador = null; S.fotosPendientes = null; location.hash = "/parte/" + a.dataset.abrir; }
+    if (u) actualizarExistente(u.dataset.act, Object.fromEntries(new FormData(form)));
+  });
+}
+
+async function actualizarExistente(pid, f) {
+  try {
+    await conCarga("Actualizando parte…", async () => {
+      const ex = await api.obtenerParte(pid);
+      const cambios = {}, rellenos = [], distintos = [];
+      for (const k of Object.keys(CAMPOS_TXT)) {
+        const nuevo = f[k] == null ? "" : String(f[k]).trim();
+        const viejo = ex[k] == null ? "" : String(ex[k]).trim();
+        if (!nuevo) continue;
+        if (!viejo) { cambios[k] = nuevo; rellenos.push(CAMPOS_TXT[k]); }
+        else if (normRef(nuevo) !== normRef(viejo) && k !== "averia") distintos.push(`${CAMPOS_TXT[k]}: ${nuevo} (antes ${viejo})`);
+        else if (k === "averia" && !viejo.includes(nuevo.slice(0, 40))) distintos.push(`avería nueva: ${nuevo}`);
+      }
+      if (ex.borrado_at) await api.restaurarParte(pid);
+      if (S.borrador?.archivo) {
+        const pdf = S.borrador.mime === "application/pdf";
+        if (!ex.documento_path || pdf) {
+          cambios.documento_path = await api.subirArchivo(`${pid}/documento_${Date.now()}.${pdf ? "pdf" : "jpg"}`, S.borrador.archivo, S.borrador.mime);
+        } else {
+          const path = await api.subirArchivo(`${pid}/documento_${Date.now()}.jpg`, S.borrador.archivo, "image/jpeg");
+          await api.anadirFoto(pid, path, "otra");
+        }
+      }
+      if (Object.keys(cambios).length) await api.actualizarParte(pid, cambios);
+      if (S.fotosPendientes?.length) { await subirFotos({ id: pid }, S.fotosPendientes, idxEstado(ex.estado) >= idxEstado("autorizado") ? "despues" : "antes"); }
+      const nota = ["Parte recibido de nuevo.",
+        rellenos.length ? "Se han rellenado: " + rellenos.join(", ") + "." : "",
+        distintos.length ? "Diferencias en el nuevo (no se han cambiado): " + distintos.join(" · ") + "." : "",
+        S.borrador?.archivo ? (S.borrador.mime === "application/pdf" || !ex.documento_path ? "Documento actualizado." : "El documento nuevo se ha guardado en Fotos.") : "",
+        ex.borrado_at ? "Recuperado de la papelera." : ""].filter(Boolean).join(" ");
+      await api.anadirEvento(pid, null, nota);
+    });
+    S.borrador = null; S.fotosPendientes = null;
+    toast("Parte actualizado", "ok");
+    location.replace("#/parte/" + pid);
+  } catch { /* conCarga ya avisa */ }
 }
 
 function irANuevo() {
@@ -389,6 +712,7 @@ async function vistaFormulario(id) {
     <h1>${id ? "Editar parte" : "Nuevo parte"}</h1><span></span>
   </header>
   ${!id && S.borrador?.archivo ? `<div class="aviso">Revisa los datos leídos antes de guardar. La IA puede equivocarse.</div>` : ""}
+  ${!id && S.fotosPendientes?.length ? `<div class="aviso">Al guardar se añadirán también ${S.fotosPendientes.length === 1 ? "1 foto compartida" : S.fotosPendientes.length + " fotos compartidas"}.</div>` : ""}
   <form id="fParte" class="form">
     <div class="tarjeta">
       <label>Aseguradora
@@ -437,6 +761,12 @@ async function vistaFormulario(id) {
   </form>`;
 
   $("#volver").onclick = $("#cancelar").onclick = () => history.back();
+  if (!id && (S.borrador?.archivo || S.fotosPendientes?.length)) avisoRepetido(p);
+  if (!id) {
+    let tRep;
+    $$("#fParte [name=expediente], #fParte [name=num_encargo], #fParte [name=num_siniestro], #fParte [name=aseguradora]").forEach((el) =>
+      el.addEventListener("change", () => { clearTimeout(tRep); tRep = setTimeout(() => avisoRepetido(Object.fromEntries(new FormData($("#fParte")))), 300); }));
+  }
   $("#fParte").addEventListener("submit", async (e) => {
     e.preventDefault();
     const f = Object.fromEntries(new FormData(e.target));
@@ -450,16 +780,23 @@ async function vistaFormulario(id) {
         toast("Guardado", "ok");
         location.replace("#/parte/" + id);
       } else {
-        const dup = await api.buscarDuplicado(f.aseguradora, f.expediente);
-        if (dup?.borrado_at) {
-          if (confirm(`Ese parte (${f.aseguradora} ${f.expediente}) está en la papelera. ¿Recuperarlo?`)) {
-            await conCarga("Recuperando…", () => api.restaurarParte(dup.id));
-            return (location.hash = "/parte/" + dup.id);
+        const rep = await analizarRepeticion(f);
+        if (rep?.identico) {
+          if (rep.orig.borrado_at) {
+            if (confirm(`Este parte ya lo tienes (igual) y está en la papelera. ¿Recuperarlo?`)) {
+              await conCarga("Recuperando…", () => api.restaurarParte(rep.orig.id));
+              S.borrador = null; return (location.hash = "/parte/" + rep.orig.id);
+            }
+            return;
+          }
+          if (confirm(`Este parte ya lo tienes y es igual (${rep.orig.nombre ?? ""}, ${rep.motivo}). No se guarda otro.\n\n¿Abrir el que ya tienes?`)) {
+            S.borrador = null; S.fotosPendientes = null; location.hash = "/parte/" + rep.orig.id;
           }
           return;
         }
-        if (dup && !confirm(`Ya existe un parte de ${f.aseguradora} con el expediente ${f.expediente} (${dup.nombre ?? ""}). ¿Crear otro igualmente?`)) {
-          return (location.hash = "/parte/" + dup.id);
+        if (rep) {
+          f.repetido_de = rep.orig.id;
+          f.cambios_repetido = rep.diffs.map((x) => x.txt).join(" · ");
         }
         const nuevo = await conCarga("Guardando…", async () => {
           const n = await api.crearParte({ ...f, datos_ia: S.borrador?.archivo ? S.borrador.datos : null });
@@ -468,14 +805,19 @@ async function vistaFormulario(id) {
             const path = await api.subirArchivo(`${n.id}/documento.${ext}`, S.borrador.archivo, S.borrador.mime);
             await api.actualizarParte(n.id, { documento_path: path });
           }
+          if (S.fotosPendientes?.length) {
+            try { await subirFotos(n, S.fotosPendientes, "antes"); } catch (e) { toast("El parte se guardó, pero no las fotos: " + e.message, "error"); }
+            S.fotosPendientes = null;
+          }
           return n;
         });
+        if (f.repetido_de) api.anadirEvento(f.repetido_de, null, `Ha llegado otro parte repetido con cambios (${f.cambios_repetido}). Se ha guardado como parte nuevo.`).catch(() => {});
         S.borrador = null;
-        toast("Parte creado", "ok");
+        toast(f.repetido_de ? "Parte creado (marcado como repetido)" : "Parte creado", "ok");
         location.replace("#/parte/" + nuevo.id);
       }
     } catch (err) {
-      if (String(err.message).includes("partes_aseg_exp_uq")) toast("Ya existe un parte con esa aseguradora y expediente", "error");
+      if (String(err.message).includes("partes_aseg_exp_uq")) toast("La base de datos todavía no admite partes repetidos con cambios (falta un paso de configuración)", "error");
     }
   });
 }
@@ -491,6 +833,9 @@ async function vistaParte(id) {
   const nombreDe = (uid) => S.miembros.find((m) => m.user_id === uid)?.nombre ?? "";
   const dirCompleta = [p.direccion, [p.codigo_postal, p.poblacion].filter(Boolean).join(" "), p.provincia].filter(Boolean).join(", ");
   const msgCliente = plantilla(CFG.MENSAJE_CLIENTE, p);
+  if (!S.partes?.length) { try { S.partes = await api.listarPartes(); } catch { /* nada */ } }
+  const original = p.repetido_de ? (S.partes || []).find((x) => x.id === p.repetido_de) : null;
+  const repetidos = (S.partes || []).filter((x) => x.repetido_de === p.id);
 
   app.innerHTML = `
   <header class="barra" style="--ase:${colorAseg(p.aseguradora)}">
@@ -499,6 +844,9 @@ async function vistaParte(id) {
     <button class="icono" id="menuParte" aria-label="Más opciones">${I.more}</button>
   </header>
 
+  ${p.repetido_de ? `<div class="aviso repetido-info">🔁 <b>Parte repetido</b>${p.cambios_repetido ? ` · Cambios: ${esc(p.cambios_repetido)}` : ""}
+    <br>${original ? `<a href="#/parte/${original.id}">Ver el parte anterior (${esc(original.estado ? estadoInfo(original.estado).nombre : "")}, ${fFecha(original.created_at)})</a>` : "El parte anterior ya no está en la lista (puede estar en la papelera)."}</div>` : ""}
+  ${repetidos.length ? `<div class="aviso repetido-info">🔁 Este parte tiene ${repetidos.length === 1 ? "un repetido posterior" : repetidos.length + " repetidos posteriores"}: ${repetidos.map((x) => `<a href="#/parte/${x.id}">${fFecha(x.created_at)}${x.num_encargo ? " · enc. " + esc(x.num_encargo) : ""}</a>`).join(" · ")}</div>` : ""}
   <section class="cabecera">
     <div class="nombre">${esc(p.nombre || "Sin nombre")}</div>
     ${dirCompleta ? `<a class="dir" href="${linkMapa(p)}" target="_blank" rel="noopener">${esc(dirCompleta)}</a>` : ""}
@@ -521,7 +869,7 @@ async function vistaParte(id) {
     <div class="estado-actual" style="--c:${e.color}">${chipDias(p, true)} · Estado: <b>${e.nombre}</b>${p.fecha_cita && idx < 2 ? ` · Cita ${fFechaHora(p.fecha_cita)}` : ""}</div>
     <div class="lista-botones">
       ${sig ? `<button class="btn primario ancho" id="avanzar" style="--c:${sig.color}">Marcar como ${sig.nombre.toLowerCase()} →</button>` : ""}
-      ${idx >= idxEstado("visitado") ? `<button class="btn primario ancho" id="informe" style="--c:#16a34a">${I.pdf} PDF de ${p.estado === "realizado" ? "trabajo terminado" : "visita"} → ${esc(DEST.nombre)}</button>` : ""}
+      ${idx >= idxEstado("visitado") ? `<button class="btn primario ancho" id="informe" style="--c:#16a34a">${I.wa} Enviar ${p.estado === "realizado" ? "trabajo terminado" : "visita"} a ${esc(DEST.nombre)}</button>` : ""}
       <button class="btn ancho" id="nota">Añadir nota</button>
     </div>
   </section>
@@ -686,7 +1034,7 @@ function menuParte(p) {
     <div class="lista-botones">
       <button class="btn ancho" id="mEditar">${I.edit} Editar datos, cita e importes</button>
       <button class="btn ancho" id="mDoc">${I.cam} Cambiar documento / volver a leer con IA</button>
-      <button class="btn ancho" id="mInforme">${I.pdf} Generar PDF (en cualquier fase)</button>
+      <button class="btn ancho" id="mInforme">${I.pdf} Enviar informe: PDF o mensaje (en cualquier fase)</button>
       <button class="btn ancho peligro" id="mBorrar">🗑 Borrar parte (a la papelera)</button>
       <button class="btn texto ancho" data-cerrar>Cerrar</button>
     </div>
@@ -865,14 +1213,124 @@ function sheetFase(p, destino) {
   });
 }
 
-// ------------------------------------------------------------------ Informe PDF y envío
+// ------------------------------------------------------------------ Informe y envío (PDF o mensaje + fotos)
+function textoInforme(p, conPrecios) {
+  const final = p.estado === "realizado";
+  const lineas = final && (p.lineas_realizadas || []).length ? p.lineas_realizadas : p.lineas_valoracion || [];
+  const ev = p.eventos || [];
+  const fechaDe = (estado) => [...ev].reverse().find((e) => e.estado === estado)?.created_at;
+  const notas = ev.filter((e) => e.nota && ["visitado", "valorado", "realizado", null].includes(e.estado ?? null) && !/^(Parte recibido de nuevo|Ha llegado otro parte|Preparado mensaje)/.test(e.nota))
+    .slice(-3).map((e) => "- " + e.nota.trim());
+  const L = [];
+  L.push(`*${final ? "TRABAJO TERMINADO" : "VISITA REALIZADA"}*`);
+  L.push(`${p.aseguradora || ""} · Exp. ${p.expediente || "—"}${p.num_encargo ? " · Encargo " + p.num_encargo : ""}${p.num_siniestro ? " · Siniestro " + p.num_siniestro : ""}`);
+  L.push(`Cliente: ${p.nombre || "—"}${p.telefono ? " · Tel. " + p.telefono : ""}`);
+  const dir = [p.direccion, p.codigo_postal, p.poblacion].filter(Boolean).join(", ");
+  if (dir) L.push(`Dirección: ${dir}`);
+  if (p.averia) L.push(`Avería: ${p.averia}`);
+  const fv = fechaDe("visitado"), fr = fechaDe("realizado");
+  if (fv) L.push(`Visita: ${fFecha(fv)}`);
+  if (final && fr) L.push(`Terminado: ${fFecha(fr)}`);
+  if (notas.length) { L.push(""); L.push("*Observaciones:*"); L.push(...notas); }
+  if (lineas.length) {
+    L.push(""); L.push(`*${final && (p.lineas_realizadas || []).length ? "Trabajos realizados" : "Valoración"}:*`);
+    for (const l of lineas) {
+      const cant = Number(l.cantidad || 1).toLocaleString("es-ES");
+      L.push(`- ${l.codigo ? l.codigo + " " : ""}${l.descripcion || ""} × ${cant}${conPrecios ? " = " + fEuros(importeLinea(l)) : ""}`);
+    }
+    if (conPrecios) {
+      const iva = CFG.IVA || 0, t = totalesLineas(lineas, iva);
+      L.push(iva ? `*TOTAL: ${fEuros(t.total)}* (IVA ${iva}% incl.)` : `*TOTAL (sin IVA): ${fEuros(t.base)}*`);
+    }
+  } else if (conPrecios && p.importe_valorado != null) {
+    L.push(""); L.push(`*Valoración: ${fEuros(p.importe_valorado)}*`);
+  }
+  L.push(""); L.push(CFG.EMPRESA?.nombre || "");
+  return L.join("\n").trim();
+}
+
+function fotosParaEnvio(p) {
+  const fotos = p.fotos || [];
+  if (p.estado === "realizado") {
+    const desp = fotos.filter((f) => f.tipo === "despues");
+    return desp.length ? desp : fotos;
+  }
+  return fotos.filter((f) => f.tipo !== "despues");
+}
+
 async function flujoInforme(pIn) {
+  cerrarSheet();
+  let p;
+  try { p = await conCarga("Preparando…", () => api.obtenerParte(pIn.id)); } catch { return; }
+  const fotos = fotosParaEnvio(p);
+  const hayLineas = (p.lineas_valoracion || []).length || (p.lineas_realizadas || []).length || p.importe_valorado != null;
+  let precios = sessionGet("precios") !== "0";
+  const tipoInf = p.estado === "realizado" ? "trabajo terminado" : "visita";
+  const s = abrirSheet(`
+    <h2>Enviar ${tipoInf} a ${esc(DEST.nombre)}</h2>
+    ${hayLineas ? `<label class="check"><input type="checkbox" id="conPrecios" ${precios ? "checked" : ""}> Incluir precios en la valoración</label>
+    <p class="suave" id="txtPrecios">${precios ? "Códigos, cantidades, precios y total." : "Solo códigos, descripción y cantidades (sin precios ni total)."}</p>` : ""}
+    <div class="lista-botones">
+      <button class="btn primario grande" id="envPDF" style="--c:#16a34a">${I.pdf}<span><b>PDF</b><small>Informe completo en un archivo PDF</small></span></button>
+      <button class="btn grande" id="envMsg">${I.wa}<span><b>Mensaje + fotos</b><small>Texto escrito${fotos.length ? ` y ${fotos.length} foto${fotos.length > 1 ? "s" : ""} adjunta${fotos.length > 1 ? "s" : ""}` : " (este parte no tiene fotos)"}</small></span></button>
+      <button class="btn texto ancho" data-cerrar>Cerrar</button>
+    </div>`);
+  $("#conPrecios", s)?.addEventListener("change", (e) => {
+    precios = e.target.checked; sessionSet("precios", precios ? "1" : "0");
+    $("#txtPrecios", s).textContent = precios ? "Códigos, cantidades, precios y total." : "Solo códigos, descripción y cantidades (sin precios ni total).";
+  });
+  $("#envPDF", s).onclick = () => enviarPDF(p, precios);
+  $("#envMsg", s).onclick = () => enviarMensaje(p, precios, fotos);
+}
+
+async function enviarMensaje(p, precios, fotosSel) {
+  const texto = textoInforme(p, precios);
+  let files = [];
+  if (fotosSel.length) {
+    try {
+      files = await conCarga("Preparando fotos…", async () => {
+        const out = [];
+        let n = 0;
+        for (const f of fotosSel) {
+          const b = await api.descargarArchivo(f.path);
+          if (b) out.push(new File([b], `${(p.expediente || "parte").replace(/[^\w-]/g, "")}_${++n}.jpg`, { type: b.type || "image/jpeg" }));
+        }
+        return out;
+      });
+    } catch { files = []; }
+  }
+  const tel = DEST.telefono || p.tramitador_telefono;
+  const quien = DEST.telefono ? DEST.nombre : "el tramitador";
+  const puedeFotos = files.length && navigator.canShare && navigator.canShare({ files });
+  cerrarSheet();
+  const s = abrirSheet(`
+    <h2>Mensaje para ${esc(quien)}</h2>
+    <textarea id="txtMsg" rows="10">${esc(texto)}</textarea>
+    <div class="lista-botones">
+      ${puedeFotos ? `<button class="btn primario grande" id="msgFotos" style="--c:#16a34a">${I.wa}<span><b>Enviar texto + ${files.length} foto${files.length > 1 ? "s" : ""}</b><small>Elige WhatsApp y luego a ${esc(quien)}</small></span></button>` : ""}
+      ${tel ? `<button class="btn grande" id="msgSolo">${I.wa}<span><b>${puedeFotos ? "Solo el texto" : "Enviar por WhatsApp"}</b><small>Abre el chat de ${esc(quien)} con el mensaje escrito</small></span></button>` : ""}
+      <button class="btn grande" id="msgCopiar">📋<span><b>Copiar texto</b><small>Para pegarlo donde quieras</small></span></button>
+      <button class="btn texto ancho" data-cerrar>Cerrar</button>
+    </div>
+    ${files.length && !puedeFotos ? '<p class="suave">Este navegador no deja adjuntar fotos directamente: envía el texto y adjunta las fotos desde la galería.</p>' : ""}`);
+  const txt = () => $("#txtMsg", s).value;
+  $("#msgFotos", s)?.addEventListener("click", async () => {
+    try { await navigator.clipboard?.writeText(txt()).catch(() => {}); await navigator.share({ files, text: txt() }); }
+    catch (e) { if (e.name !== "AbortError") toast("No se pudo compartir: " + e.message, "error"); }
+  });
+  $("#msgSolo", s)?.addEventListener("click", () => { location.href = linkWhatsApp(tel, txt()); });
+  $("#msgCopiar", s).onclick = async () => {
+    try { await navigator.clipboard.writeText(txt()); toast("Texto copiado", "ok"); } catch { toast("No se pudo copiar", "error"); }
+  };
+}
+
+async function enviarPDF(pIn, precios) {
   cerrarSheet();
   let blob, nombre, p, enlace = null;
   try {
     ({ blob, nombre, p } = await conCarga("Generando PDF…", async () => {
       const p = await api.obtenerParte(pIn.id);
-      const r = await generarInforme(p, api, S.miembros);
+      const r = await generarInforme(p, api, S.miembros, { precios });
       const path = await api.subirArchivo(`${p.id}/${r.nombre}`, r.blob, "application/pdf");
       await api.actualizarParte(p.id, { informe_path: path });
       if (api.modo === "supabase") { try { enlace = await api.urlArchivo(path, 60 * 60 * 24 * 30); } catch { /* sin enlace */ } }
@@ -888,7 +1346,7 @@ async function flujoInforme(pIn) {
   const quien = DEST.telefono ? DEST.nombre : "el tramitador";
   const s = abrirSheet(`
     <h2>PDF listo</h2>
-    <p class="suave">${esc(nombre)}</p>
+    <p class="suave">${esc(nombre)}${precios ? "" : " · sin precios"}</p>
     <div class="lista-botones">
       ${puedeCompartir ? `<button class="btn primario grande" id="compartir" style="--c:#16a34a">${I.wa}<span><b>Enviar PDF por WhatsApp</b><small>Elige WhatsApp y luego a ${esc(quien)}</small></span></button>` : ""}
       ${tel ? `<a class="btn grande" id="waEnlace" target="_blank" rel="noopener" href="${linkWhatsApp(tel, texto + (enlace ? "\n" + enlace : ""))}">${I.wa}<span><b>WhatsApp directo a ${esc(quien)}</b><small>${enlace ? "Mensaje con enlace al PDF (válido 30 días)" : "Abre el chat; adjunta el PDF descargado"}</small></span></a>` : ""}
@@ -1132,6 +1590,11 @@ async function vistaAjustes() {
       <label>IVA que se suma a las valoraciones (%, 0 = sin IVA)<input name="iva" type="number" step="1" min="0" value="${CFG.IVA ?? 21}"></label>
     </section>
     <section class="tarjeta">
+      <h3>Zonas</h3>
+      <label>Una zona por línea: <i>Nombre: pueblo, pueblo, pueblo…</i><textarea name="zonas" rows="8">${esc((CFG.ZONAS || []).map((z) => z.nombre + ": " + (z.pueblos || []).join(", ")).join("\n"))}</textarea></label>
+      <p class="suave">Cada parte se asigna a la zona cuyo pueblo aparece en su población. Los que no encajan salen en "Sin zona".</p>
+    </section>
+    <section class="tarjeta">
       <h3>Aseguradoras del desplegable</h3>
       <label>Una por línea<textarea name="aseguradoras" rows="7">${esc(CFG.ASEGURADORAS.join("\n"))}</textarea></label>
     </section>
@@ -1164,6 +1627,10 @@ async function vistaAjustes() {
       MENSAJE_CLIENTE: f.mensaje.trim(),
       IVA: Number(f.iva) || 0,
       WHATSAPP_APP: f.wa_app || "business",
+      ZONAS: f.zonas.split("\n").map((l) => l.trim()).filter(Boolean).map((l) => {
+        const i = l.indexOf(":");
+        return i < 0 ? { nombre: l, pueblos: [l] } : { nombre: l.slice(0, i).trim(), pueblos: l.slice(i + 1).split(",").map((x) => x.trim()).filter(Boolean) };
+      }),
     };
     if (!datos.ASEGURADORAS.includes("Otra")) datos.ASEGURADORAS.push("Otra");
     await conCarga("Guardando…", () => api.guardarAjustes(datos));
