@@ -1,5 +1,5 @@
 // Service worker: permite instalar la app y abrirla sin conexión (la última versión cargada).
-const CACHE = "partes-v12";
+const CACHE = "partes-v13";
 const COMPARTIDO = "partes-compartido";
 const BASE = ["./", "index.html", "styles.css", "js/app.js", "js/api.js", "js/util.js", "js/pdf.js", "js/config.js",
 "manifest.webmanifest", "icons/icon-192.png"];
@@ -30,7 +30,7 @@ self.addEventListener("fetch", (e) => {
   const cdn = url.hostname === "cdn.jsdelivr.net";
   if (e.request.method !== "GET" || (url.origin !== location.origin && !cdn)) return;
   e.respondWith(
-    fetch(e.request).then((r) => { const copia = r.clone(); caches.open(CACHE).then((c) => c.put(e.request, copia)); return r; })
+    fetch(cdn ? e.request : e.request.url, cdn ? undefined : { cache: "no-cache", credentials: "same-origin" }).then((r) => { const copia = r.clone(); caches.open(CACHE).then((c) => c.put(e.request, copia)); return r; })
       .catch(() => caches.match(e.request, { ignoreSearch: true }))
   );
 });
