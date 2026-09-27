@@ -33,10 +33,17 @@ function crearApiSupabase() {
       yo = m ? { ...m, email: user.email } : { user_id: user.id, email: user.email, nombre: null };
       return yo;
     },
-    async miembros() { return ok(await sb.from("miembros").select("user_id,nombre,telefono").order("nombre")); },
+    async miembros() { return ok(await sb.from("miembros").select("user_id,nombre,telefono,es_admin,ver_precios").order("nombre")); },
 
     async listarPartes() {
       return ok(await sb.from("partes").select("*").is("borrado_at", null).order("updated_at", { ascending: false }).limit(3000));
+    },
+    async exportarTodo() {
+      const [p, e] = await Promise.all([
+        sb.from("partes").select("*").order("created_at").limit(10000),
+        sb.from("eventos").select("*").order("created_at").limit(50000),
+      ]);
+      return { partes: ok(p), eventos: ok(e) };
     },
     async listarPapelera() {
       return ok(await sb.from("partes").select("id,aseguradora,expediente,nombre,poblacion,estado,borrado_at").not("borrado_at", "is", null).order("borrado_at", { ascending: false }));
@@ -152,6 +159,7 @@ function crearApiDemo() {
     async miembros() { return [YO, { user_id: "demo2", nombre: "Técnico 2" }]; },
     async listarPartes() { return db.partes.filter((p) => !p.borrado_at).sort((a, b) => b.updated_at.localeCompare(a.updated_at)); },
     async listarPapelera() { return db.partes.filter((p) => p.borrado_at); },
+    async exportarTodo() { return { partes: db.partes, eventos: db.eventos }; },
     async aPapelera(id) { const p = db.partes.find((x) => x.id === id); p.borrado_at = ahora(); guardar(); },
     async restaurarParte(id) { const p = db.partes.find((x) => x.id === id); p.borrado_at = null; guardar(); },
     async editarEvento(id, c) { const e = db.eventos.find((x) => x.id === id); Object.assign(e, c); guardar(); },

@@ -33,11 +33,15 @@ const S = {
   borrador: null, // parte nuevo pendiente de guardar {datos, archivo, mime}
 };
 
+// Usuarios sin permiso de precios: la app no les muestra importes (solo se oculta en pantalla).
+const verPrecios = () => api.modo !== "supabase" ? sessionGet("demoSinPrecios") !== "1" : (S.yo?.es_admin || S.yo?.ver_precios !== false);
 function sessionGet(k) { try { return localStorage.getItem("pa_" + k); } catch { return null; } }
 function sessionSet(k, v) { try { localStorage.setItem("pa_" + k, v); } catch { /* nada */ } }
 
 // ------------------------------------------------------------------ Iconos
 const I = {
+  cal: '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>',
+  bell: '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg>',
   phone: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1 1 .4 1.9.7 2.8a2 2 0 0 1-.5 2.1L8 9.9a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.4c.9.3 1.8.6 2.8.7a2 2 0 0 1 1.7 2z"/></svg>',
   wa: '<svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M12 2a10 10 0 0 0-8.6 15.1L2 22l5-1.3A10 10 0 1 0 12 2zm0 18.2a8.2 8.2 0 0 1-4.2-1.2l-.3-.2-3 .8.8-2.9-.2-.3A8.2 8.2 0 1 1 12 20.2zm4.5-6.1c-.2-.1-1.5-.7-1.7-.8-.2-.1-.4-.1-.6.1l-.8 1c-.1.2-.3.2-.5.1a6.7 6.7 0 0 1-3.3-2.9c-.3-.4.2-.4.7-1.3.1-.2 0-.3 0-.4l-.8-1.8c-.2-.5-.4-.4-.6-.4h-.5a1 1 0 0 0-.7.3 3 3 0 0 0-.9 2.2c0 1.3.9 2.5 1 2.7.1.2 1.8 2.8 4.4 3.9 1.6.7 2.3.8 3.1.6.5-.1 1.5-.6 1.7-1.2.2-.6.2-1.1.2-1.2-.1-.1-.3-.2-.5-.3z"/></svg>',
   map: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 7-9 13-9 13S3 17 3 10a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>',
@@ -93,6 +97,7 @@ async function router() {
   }
   if (!ajustesCargados) await cargarAjustes();
   if (api.modo === "supabase" && !S.yo?.nombre) return vistaSinAcceso();
+  document.body.classList.toggle("sin-precios", !verPrecios());
   const [, ruta, id] = h.split("/");
   window.scrollTo(0, 0);
   if (!ruta) return vistaLista();
@@ -102,6 +107,7 @@ async function router() {
   if (ruta === "lineas" && id) return vistaLineas(id, h.split("/")[3] || "valoracion");
   if (ruta === "papelera") return vistaPapelera();
   if (ruta === "compartido") return vistaCompartido();
+  if (ruta === "agenda") return vistaAgenda();
   if (ruta === "tarifa") return S.yo?.es_admin ? vistaTarifa() : (location.hash = "/");
   if (ruta === "ajustes") return S.yo?.es_admin ? vistaAjustes() : (location.hash = "/");
   location.hash = "/";
@@ -150,6 +156,8 @@ async function vistaLista() {
     <h1>Partes</h1>
     <div class="barra-acc">
       ${yaInstalada() ? "" : `<button class="btn peq instalar ${avisoInstalar ? "" : "oculto"}" id="btnInstalar">Instalar app</button>`}
+      <button class="icono" id="btnResumen" aria-label="Pendientes de hoy">${I.bell}<b class="badge" id="nResumen"></b></button>
+      <a class="icono" href="#/agenda" aria-label="Agenda">${I.cal}</a>
       <button class="icono" id="recargar" aria-label="Recargar">${I.refresh}</button>
       <button class="icono" id="menuUsuario" aria-label="Usuario">${I.user}</button>
     </div>
@@ -159,10 +167,10 @@ async function vistaLista() {
     ${I.search}<input id="busca" type="search" placeholder="Buscar nombre, expediente, calle, teléfono…" value="${esc(S.busqueda)}">
   </div>
   <div class="chips" id="chips"></div>
+  <div class="chips zonas" id="chipsZona"></div>
   <div class="filtros">
     <label class="solo-mios"><input type="checkbox" id="soloMios" ${S.soloMios ? "checked" : ""}> Solo míos</label>
     <select id="fAseg"><option value="">Todas las aseguradoras</option>${[...new Set(S.partes.map((p) => p.aseguradora).concat(CFG.ASEGURADORAS))].filter((a) => a && a !== "Otra").map((a) => `<option ${a === S.filtroAseg ? "selected" : ""}>${esc(a)}</option>`).join("")}</select>
-    <select id="fZona"><option value="">Todas las zonas</option>${(CFG.ZONAS || []).map((z) => `<option ${z.nombre === S.filtroZona ? "selected" : ""}>${esc(z.nombre)}</option>`).join("")}<option value="-" ${S.filtroZona === "-" ? "selected" : ""}>Sin zona</option></select>
     <select id="orden">
       ${[["recientes", "Últimos movidos"], ["antiguos", "Más días primero"], ["cita", "Próxima cita"], ["nuevos", "Últimos entrados"]].map(([v, t]) => `<option value="${v}" ${S.orden === v ? "selected" : ""}>${t}</option>`).join("")}
     </select>
@@ -175,14 +183,15 @@ async function vistaLista() {
   $("#busca").addEventListener("input", (e) => { S.busqueda = e.target.value; pintarLista(); });
   $("#soloMios").addEventListener("change", (e) => { S.soloMios = e.target.checked; sessionSet("soloMios", S.soloMios ? "1" : "0"); pintarLista(); });
   $("#fAseg").addEventListener("change", (e) => { S.filtroAseg = e.target.value; sessionSet("filtroAseg", S.filtroAseg); pintarLista(); });
-  $("#fZona").addEventListener("change", (e) => { S.filtroZona = e.target.value; sessionSet("filtroZona", S.filtroZona); pintarLista(); });
   $("#orden").addEventListener("change", (e) => { S.orden = e.target.value; sessionSet("orden", S.orden); pintarLista(); });
   $("#btnFiltros").addEventListener("click", sheetFiltros);
+  $("#btnResumen").addEventListener("click", () => sheetResumen(true));
   $("#nuevo").addEventListener("click", menuNuevo);
   $("#recargar").addEventListener("click", cargarPartes);
   $("#menuUsuario").addEventListener("click", menuUsuario);
   $("#btnInstalar")?.addEventListener("click", instalarApp);
   await cargarPartes();
+  if (S.saltarResumen) S.saltarResumen = false; else sheetResumen(false);
 }
 
 async function cargarPartes() {
@@ -196,6 +205,7 @@ function pintarLista() {
   let base = S.partes;
   if (S.soloMios) base = base.filter((p) => p.asignado_a === S.yo.user_id);
   if (S.filtroAseg) base = base.filter((p) => p.aseguradora === S.filtroAseg);
+  const baseSinZona = base;
   if (S.filtroZona) base = base.filter((p) => (zonaDe(p) || "-") === S.filtroZona);
   base = base.filter(pasaFiltrosExtra);
   pintarFiltrosActivos();
@@ -212,6 +222,14 @@ function pintarLista() {
   $("#chips").innerHTML = chips.map((c) =>
     `<button class="chip ${S.filtro === c.id ? "activo" : ""}" data-f="${c.id}" ${c.color ? `style="--c:${c.color}"` : ""}>${c.nombre}<b>${c.n}</b></button>`).join("");
   $$("#chips .chip").forEach((b) => b.addEventListener("click", () => { S.filtro = b.dataset.f; sessionSet("filtro", S.filtro); pintarLista(); }));
+  const enFase = (p) => S.filtro === "todos" || (S.filtro === "activos" ? p.estado !== "realizado" : p.estado === S.filtro);
+  const cz = (z) => baseSinZona.filter((p) => enFase(p) && (zonaDe(p) || "-") === z).length;
+  const zonasChips = [{ id: "", nombre: "📍 Todas las zonas", n: baseSinZona.filter(enFase).length },
+    ...(CFG.ZONAS || []).map((z) => ({ id: z.nombre, nombre: z.nombre, n: cz(z.nombre) })),
+    { id: "-", nombre: "Sin zona", n: cz("-") }];
+  $("#chipsZona").innerHTML = zonasChips.map((c) =>
+    `<button class="chip ${S.filtroZona === c.id ? "activo" : ""}" data-z="${esc(c.id)}">${esc(c.nombre)}<b>${c.n}</b></button>`).join("");
+  $$("#chipsZona .chip").forEach((b) => b.addEventListener("click", () => { S.filtroZona = b.dataset.z; sessionSet("filtroZona", S.filtroZona); pintarLista(); }));
 
   let lista = base;
   if (S.filtro === "activos") lista = base.filter((p) => p.estado !== "realizado");
@@ -292,8 +310,11 @@ const FILTROS_EXTRA = {
       return true;
     } },
 };
+function filtrosDisponibles() {
+  return Object.entries(FILTROS_EXTRA).filter(([k]) => k !== "importe" || verPrecios());
+}
 function pasaFiltrosExtra(p) {
-  return Object.entries(S.fx || {}).every(([k, v]) => !v || !FILTROS_EXTRA[k] || FILTROS_EXTRA[k].fn(p, v));
+  return Object.entries(S.fx || {}).every(([k, v]) => !v || !FILTROS_EXTRA[k] || (k === "importe" && !verPrecios()) || FILTROS_EXTRA[k].fn(p, v));
 }
 function guardarFx() { sessionSet("fx", JSON.stringify(S.fx)); }
 function pintarFiltrosActivos() {
@@ -313,7 +334,7 @@ function sheetFiltros() {
   const s = abrirSheet(`
     <h2>Más filtros</h2>
     <div class="form-filtros">
-      ${Object.entries(FILTROS_EXTRA).map(([k, f]) => `
+      ${filtrosDisponibles().map(([k, f]) => `
         <label>${esc(f.t)}<select data-fx="${k}"><option value="">— Todos —</option>
           ${f.op().map(([v, t]) => `<option value="${esc(v)}" ${S.fx[k] === v ? "selected" : ""}>${esc(t)}</option>`).join("")}
         </select></label>`).join("")}
@@ -324,6 +345,145 @@ function sheetFiltros() {
   $$("[data-fx]", s).forEach((sel) => sel.addEventListener("change", () => { S.fx[sel.dataset.fx] = sel.value; if (!sel.value) delete S.fx[sel.dataset.fx]; guardarFx(); cuenta(); }));
   $("#fxLimpiar", s).onclick = () => { S.fx = {}; guardarFx(); $$("[data-fx]", s).forEach((x) => (x.value = "")); cuenta(); };
   cuenta();
+}
+
+// ------------------------------------------------------------------ Resumen de pendientes
+function datosResumen() {
+  const ps = S.partes || [];
+  const cuenta = (k, v) => ps.filter((p) => FILTROS_EXTRA[k].fn(p, v)).length;
+  return [
+    { k: "cita", v: "hoy", t: "📅 Citas de hoy", n: cuenta("cita", "hoy"), aviso: false },
+    { k: "cita", v: "pasada", t: "⏰ Cita pasada y sin marcar visitado", n: cuenta("cita", "pasada"), aviso: true },
+    { k: "falta", v: "contactar", t: "📞 Sin contactar (más de 2 días)", n: cuenta("falta", "contactar"), aviso: true },
+    { k: "cita", v: "sin", t: "🗓️ Contactados sin cita", n: cuenta("cita", "sin"), aviso: true },
+    { k: "falta", v: "valorar", t: "📋 Visitados sin valorar", n: cuenta("falta", "valorar"), aviso: true },
+    { k: "falta", v: "autorizar", t: "⏳ Valorados sin respuesta (más de 7 días)", n: cuenta("falta", "autorizar"), aviso: true },
+    { k: "falta", v: "terminar", t: "🔧 Autorizados pendientes de hacer", n: cuenta("falta", "terminar"), aviso: false },
+    { k: "dias", v: "30", t: "🔴 Atascados (más de 30 días)", n: ps.filter((p) => p.estado !== "realizado" && diasParte(p) > 30).length, aviso: true },
+  ];
+}
+function sheetResumen(forzar) {
+  const d = datosResumen();
+  const avisos = d.filter((x) => x.aviso).reduce((a, x) => a + x.n, 0);
+  const b = $("#nResumen"); if (b) b.textContent = avisos ? String(avisos) : "";
+  const hoy = new Date().toISOString().slice(0, 10);
+  if (!forzar && (sessionGet("resumen") === hoy || !d.some((x) => x.n))) return;
+  sessionSet("resumen", hoy);
+  const s = abrirSheet(`
+    <h2>Pendientes de hoy</h2>
+    <div class="resumen">${d.filter((x) => x.n || forzar).map((x, i) => `
+      <button class="res-fila ${x.n ? "" : "cero"} ${x.aviso && x.n ? "aviso" : ""}" data-i="${d.indexOf(x)}"><span>${x.t}</span><b>${x.n}</b></button>`).join("")}
+    </div>
+    <p class="suave">Pulsa una fila para ver esos partes. Este resumen sale una vez al día; puedes abrirlo con la campana 🔔.</p>
+    <button class="btn texto ancho" data-cerrar>Cerrar</button>`);
+  $$(".res-fila", s).forEach((el) => el.addEventListener("click", () => {
+    const x = d[el.dataset.i];
+    if (x.k === "dias") { S.fx = { dias: "30" }; S.filtro = "activos"; }
+    else { S.fx = { [x.k]: x.v }; S.filtro = "todos"; }
+    S.filtroZona = ""; sessionSet("filtroZona", ""); sessionSet("filtro", S.filtro); guardarFx();
+    cerrarSheet();
+    if (location.hash.replace("#", "") !== "/" && location.hash !== "") location.hash = "/"; else pintarLista();
+  }));
+}
+
+// ------------------------------------------------------------------ Agenda de citas
+async function vistaAgenda() {
+  if (!S.partes?.length) { try { S.partes = await api.listarPartes(); } catch { S.partes = []; } }
+  let zona = sessionGet("agendaZona") ?? "";
+  app.innerHTML = `
+  <header class="barra">
+    <button class="icono" id="volver" aria-label="Volver">${I.back}</button>
+    <h1>Agenda de citas</h1><span></span>
+  </header>
+  <div class="chips zonas" id="agZonas"></div>
+  <main id="agenda" class="agenda"></main>`;
+  $("#volver").onclick = () => (location.hash = "/");
+  const dirDe = (p) => [p.direccion, p.codigo_postal, p.poblacion].filter(Boolean).join(", ");
+  const pinta = () => {
+    const hoy = new Date(); hoy.setHours(0, 0, 0, 0);
+    const conCita = S.partes.filter((p) => p.fecha_cita && p.estado !== "realizado" && (!zona || (zonaDe(p) || "-") === zona));
+    const pasadas = conCita.filter((p) => new Date(p.fecha_cita) < hoy && idxEstado(p.estado) < idxEstado("visitado"));
+    const prox = conCita.filter((p) => new Date(p.fecha_cita) >= hoy).sort((a, b) => a.fecha_cita.localeCompare(b.fecha_cita));
+    const sinCita = S.partes.filter((p) => p.estado === "contactado" && !p.fecha_cita && (!zona || (zonaDe(p) || "-") === zona));
+    const zs = [{ id: "", n: "📍 Todas" }, ...(CFG.ZONAS || []).map((z) => ({ id: z.nombre, n: z.nombre })), { id: "-", n: "Sin zona" }];
+    $("#agZonas").innerHTML = zs.map((z) => `<button class="chip ${zona === z.id ? "activo" : ""}" data-z="${esc(z.id)}">${esc(z.n)}</button>`).join("");
+    $$("#agZonas .chip").forEach((b) => b.onclick = () => { zona = b.dataset.z; sessionSet("agendaZona", zona); pinta(); });
+    const dias = new Map();
+    const diaLocal = (iso) => new Date(iso).toLocaleDateString("sv-SE");
+    for (const p of prox) { const k = diaLocal(p.fecha_cita); if (!dias.has(k)) dias.set(k, []); dias.get(k).push(p); }
+    const item = (p) => `
+      <div class="ag-item" data-id="${p.id}">
+        <div class="ag-hora">${p.fecha_cita ? new Date(p.fecha_cita).toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" }) : "—"}</div>
+        <div class="ag-info"><b>${esc(p.nombre || "Sin nombre")}</b><small>${esc(dirDe(p) || "Sin dirección")}${zonaDe(p) ? ` · ${esc(zonaDe(p))}` : ""}</small>
+          <small>${esc(p.aseguradora || "")} ${esc(p.expediente || "")} · ${estadoInfo(p.estado).nombre}</small></div>
+        <div class="ag-acc">
+          ${p.telefono ? `<a class="mini tel" href="${linkLlamar(p.telefono)}" aria-label="Llamar">${I.phone}</a>` : ""}
+          ${dirDe(p) ? `<a class="mini" href="${linkMapa(p)}" target="_blank" rel="noopener" aria-label="Cómo llegar">${I.map}</a>` : ""}
+        </div>
+      </div>`;
+    const nombreDia = (k) => {
+      const d = new Date(k + "T12:00:00"), dd = Math.floor((d - hoy) / 864e5);
+      const base = d.toLocaleDateString("es-ES", { weekday: "long", day: "numeric", month: "long" });
+      return (dd === 0 ? "Hoy · " : dd === 1 ? "Mañana · " : "") + base.charAt(0).toUpperCase() + base.slice(1);
+    };
+    const ruta = (ps) => {
+      const dirs = ps.map(dirDe).filter(Boolean);
+      if (!dirs.length) return "";
+      const dest = dirs.at(-1), way = dirs.slice(0, -1).slice(0, 9);
+      return `https://www.google.com/maps/dir/?api=1&destination=${encodeURIComponent(dest)}${way.length ? "&waypoints=" + encodeURIComponent(way.join("|")) : ""}`;
+    };
+    let html = "";
+    if (pasadas.length) html += `<section class="ag-dia pasadas"><h3>⏰ Citas pasadas sin marcar visitado (${pasadas.length})</h3>${pasadas.map(item).join("")}</section>`;
+    for (const [k, ps] of dias) {
+      const r = ruta(ps);
+      html += `<section class="ag-dia"><div class="h3-fila"><h3>${nombreDia(k)} <small>(${ps.length})</small></h3>${r && ps.length > 1 ? `<a class="btn peq" href="${r}" target="_blank" rel="noopener">🗺️ Ruta del día</a>` : ""}</div>${ps.map(item).join("")}</section>`;
+    }
+    if (sinCita.length) html += `<section class="ag-dia"><h3>🗓️ Contactados sin cita (${sinCita.length})</h3>${sinCita.map((p) => item({ ...p, fecha_cita: null })).join("")}</section>`;
+    $("#agenda").innerHTML = html || '<div class="vacio">No hay citas próximas.<br>Las citas se ponen al marcar un parte como <b>Contactado</b>.</div>';
+    $$(".ag-item", $("#agenda")).forEach((el) => el.addEventListener("click", (e) => { if (!e.target.closest("a")) location.hash = "/parte/" + el.dataset.id; }));
+  };
+  pinta();
+}
+
+// ------------------------------------------------------------------ Copia de seguridad (Excel)
+async function copiaSeguridad() {
+  try {
+    await conCarga("Preparando copia…", async () => {
+      if (!window.XLSX) await new Promise((ok, ko) => {
+        const sc = document.createElement("script");
+        sc.src = "https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js";
+        sc.onload = ok; sc.onerror = () => ko(new Error("No se pudo cargar el generador de Excel (¿sin conexión?)"));
+        document.head.appendChild(sc);
+      });
+      const { partes, eventos } = await api.exportarTodo();
+      const precios = verPrecios();
+      const exp = new Map(partes.map((p) => [p.id, p]));
+      const nombre = (uid) => S.miembros.find((m) => m.user_id === uid)?.nombre ?? "";
+      const hojaPartes = partes.map((p) => ({
+        Aseguradora: p.aseguradora, Expediente: p.expediente, "Nº encargo": p.num_encargo, "Nº siniestro": p.num_siniestro, Póliza: p.poliza,
+        Estado: estadoInfo(p.estado).nombre, "En papelera": p.borrado_at ? "Sí" : "", Repetido: p.repetido_de ? "Sí" : "",
+        Nombre: p.nombre, Teléfono: p.telefono, "Teléfono 2": p.telefono2, Dirección: p.direccion, CP: p.codigo_postal, Población: p.poblacion,
+        Provincia: p.provincia, Zona: zonaDe(p), Avería: p.averia, Tramitador: p.tramitador_nombre, "Tel. tramitador": p.tramitador_telefono,
+        "Fecha encargo": p.fecha_encargo, Cita: p.fecha_cita ? fFechaHora(p.fecha_cita) : "", Asignado: nombre(p.asignado_a),
+        ...(precios ? { "Valorado (€)": p.importe_valorado, "Autorizado (€)": p.importe_autorizado } : {}),
+        Entrada: fFechaHora(p.created_at), "Último cambio": fFechaHora(p.updated_at), Días: diasParte(p),
+      }));
+      const hojaLineas = [];
+      for (const p of partes) for (const [tipo, ls] of [["Valoración", p.lineas_valoracion], ["Realizado", p.lineas_realizadas]])
+        for (const l of ls || []) hojaLineas.push({ Expediente: p.expediente, Cliente: p.nombre, Tipo: tipo, Código: l.codigo, Descripción: l.descripcion, Cantidad: Number(l.cantidad),
+          ...(precios ? { "Precio (€)": Number(l.precio), "Dto %": Number(l.dto) || 0, "Importe (€)": importeLinea(l) } : {}) });
+      const hojaHist = eventos.map((e) => ({ Expediente: exp.get(e.parte_id)?.expediente ?? "", Cliente: exp.get(e.parte_id)?.nombre ?? "",
+        Fecha: fFechaHora(e.created_at), Fase: e.estado ? estadoInfo(e.estado).nombre : "Nota", Nota: e.nota ?? "", Usuario: nombre(e.creado_por) }));
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(hojaPartes), "Partes");
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(hojaLineas.length ? hojaLineas : [{ Info: "Sin líneas" }]), "Líneas");
+      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(hojaHist.length ? hojaHist : [{ Info: "Sin historial" }]), "Historial");
+      const out = XLSX.write(wb, { bookType: "xlsx", type: "array" });
+      descargar(new Blob([out], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }), `copia_partes_${new Date().toISOString().slice(0, 10)}.xlsx`);
+      sessionSet("ultimaCopia", new Date().toISOString());
+    });
+    toast("Copia descargada", "ok");
+  } catch { /* conCarga avisa */ }
 }
 
 function tarjetaParte(p) {
@@ -341,7 +501,7 @@ function tarjetaParte(p) {
     <div class="parte-nombre">${esc(p.nombre || "Sin nombre")}</div>
     <div class="parte-dir">${esc([p.direccion, p.poblacion].filter(Boolean).join(", "))}${zonaDe(p) ? ` <span class="zona">${esc(zonaDe(p))}</span>` : ""}</div>
     ${p.averia ? `<div class="parte-averia">${esc(p.averia)}</div>` : ""}
-    ${p.importe_valorado != null ? `<div class="parte-importe">Valoración: <b>${fEuros(p.importe_valorado)}</b>${p.importe_autorizado != null ? ` · Autorizado: <b>${fEuros(p.importe_autorizado)}</b>` : ""}</div>` : ""}
+    ${p.importe_valorado != null && verPrecios() ? `<div class="parte-importe">Valoración: <b>${fEuros(p.importe_valorado)}</b>${p.importe_autorizado != null ? ` · Autorizado: <b>${fEuros(p.importe_autorizado)}</b>` : ""}</div>` : ""}
     <div class="parte-pie">
       <span>${p.fecha_cita && ["contactado"].includes(p.estado) ? `📅 Cita ${fFechaHora(p.fecha_cita)}` : hace(p.updated_at)}${asignado ? " · " + esc(asignado) : ""}</span>
       <span class="parte-acc">
@@ -381,6 +541,7 @@ function menuUsuario() {
 
 function exportarCSV() {
   const cols = ["aseguradora", "expediente", "num_encargo", "num_siniestro", "poliza", "estado", "nombre", "telefono", "direccion", "codigo_postal", "poblacion", "averia", "importe_valorado", "importe_autorizado", "fecha_cita", "created_at", "updated_at"];
+  if (!verPrecios()) cols.splice(0, cols.length, ...cols.filter((c) => !c.startsWith("importe")));
   const q = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
   const csv = "﻿" + [cols.join(";"), ...S.partes.map((p) => cols.map((c) => q(p[c])).join(";"))].join("\n");
   descargar(new Blob([csv], { type: "text/csv" }), `partes_${new Date().toISOString().slice(0, 10)}.csv`);
@@ -457,6 +618,7 @@ async function vistaCompartido() {
   if (nuevos.length) S.compartidos = nuevos;
   const files = S.compartidos || [];
   history.replaceState(null, "", location.pathname + "#/");
+  S.saltarResumen = true;
   await vistaLista();
   if (!files.length) return toast("No ha llegado ningún archivo. Vuelve a compartirlo.", "error");
   const esPDF = (f) => f.type === "application/pdf" || /\.pdf$/i.test(f.name);
@@ -745,7 +907,7 @@ async function vistaFormulario(id) {
     </div>
     ${id ? `<div class="tarjeta">
       <label>Fecha y hora de la cita<input type="datetime-local" name="fecha_cita" value="${toLocalInput(p.fecha_cita)}"></label>
-      <div class="dos">${campo("importe_valorado", "Valorado (€ sin IVA)", "number", 'step="0.01" inputmode="decimal"')}${campo("importe_autorizado", "Autorizado (€)", "number", 'step="0.01" inputmode="decimal"')}</div>
+      <div class="dos precio">${campo("importe_valorado", "Valorado (€ sin IVA)", "number", 'step="0.01" inputmode="decimal"')}${campo("importe_autorizado", "Autorizado (€)", "number", 'step="0.01" inputmode="decimal"')}</div>
     </div>` : ""}
     <div class="tarjeta">
       <label>Asignado a
@@ -888,8 +1050,7 @@ async function vistaParte(id) {
     ${dato("Póliza", p.poliza)}
     ${dato("Fecha encargo", fFecha(p.fecha_encargo))}
     ${p.fecha_cita ? `<div class="dato"><span>Cita</span><b>${fFechaHora(p.fecha_cita)} · <a href="${linkCalendario(p)}" target="_blank" rel="noopener">📅 Añadir al calendario</a></b></div>` : ""}
-    ${dato("Valorado (sin IVA)", fEuros(p.importe_valorado))}
-    ${dato("Autorizado", fEuros(p.importe_autorizado))}
+    ${verPrecios() ? dato("Valorado (sin IVA)", fEuros(p.importe_valorado)) + dato("Autorizado", fEuros(p.importe_autorizado)) : ""}
     <div class="dato"><span>Asignado</span><b>
       <select id="asignar"><option value="">— Sin asignar —</option>
         ${S.miembros.map((m) => `<option value="${m.user_id}" ${m.user_id === p.asignado_a ? "selected" : ""}>${esc(m.nombre)}</option>`).join("")}
@@ -959,8 +1120,8 @@ function seccionLineas(p, tipo) {
     <div class="h3-fila"><h3>${tipo === "realizados" ? "Trabajos realizados" : "Valoración"}</h3>
       <a class="btn peq" href="#/lineas/${p.id}/${tipo}">${lineas.length ? "Editar" : "+ Códigos"}</a></div>
     ${lineas.length ? `<div class="lineas-mini">${lineas.map((l) => `
-      <div><span><b>${esc(l.codigo || "—")}</b> ${esc(l.descripcion)}</span><span>${Number(l.cantidad)}× · ${fEuros(importeLinea(l))}${Number(l.dto) ? ` <small>(-${Number(l.dto)}%)</small>` : ""}</span></div>`).join("")}</div>
-      <div class="totales">${htmlTotales(t)}</div>`
+      <div><span><b>${esc(l.codigo || "—")}</b> ${esc(l.descripcion)}</span><span>${Number(l.cantidad)}×<span class="precio"> · ${fEuros(importeLinea(l))}${Number(l.dto) ? ` <small>(-${Number(l.dto)}%)</small>` : ""}</span></span></div>`).join("")}</div>
+      <div class="totales precio">${htmlTotales(t)}</div>`
       : `<p class="suave">${tipo === "realizados" ? "Sin trabajos anotados. Al editarlos se copian los de la valoración para que solo cambies lo que haya variado." : "Sin códigos. Busca por código o por descripción."}</p>`}
   </section>`;
 }
@@ -1163,8 +1324,8 @@ function sheetFase(p, destino) {
       <label>${PREGUNTA[destino]}<textarea name="nota" rows="4" placeholder="${destino === "contactado" ? "Ej.: le viene bien el martes por la tarde, hay que llamar antes de ir…" : ""}"></textarea></label>
       ${destino === "contactado" ? `<label>Fecha y hora de la visita<input type="datetime-local" name="fecha_cita" value="${toLocalInput(p.fecha_cita)}"></label>` : ""}
       ${destino === "valorado" ? `<a class="btn ancho" href="#/lineas/${p.id}/valoracion">📋 ${(p.lineas_valoracion || []).length ? "Revisar" : "Meter"} códigos de la tarifa</a>
-        <label>Importe valorado (€, sin IVA)<input type="number" step="0.01" inputmode="decimal" name="importe_valorado" value="${(p.lineas_valoracion || []).length ? totalesLineas(p.lineas_valoracion).base : (p.importe_valorado ?? "")}"></label>` : ""}
-      ${destino === "autorizado" ? `<label>Importe autorizado (€)<input type="number" step="0.01" inputmode="decimal" name="importe_autorizado" value="${p.importe_autorizado ?? p.importe_valorado ?? ""}"></label>` : ""}
+        <label class="precio">Importe valorado (€, sin IVA)<input type="number" step="0.01" inputmode="decimal" name="importe_valorado" value="${(p.lineas_valoracion || []).length ? totalesLineas(p.lineas_valoracion).base : (p.importe_valorado ?? "")}"></label>` : ""}
+      ${destino === "autorizado" ? `<label class="precio">Importe autorizado (€)<input type="number" step="0.01" inputmode="decimal" name="importe_autorizado" value="${p.importe_autorizado ?? p.importe_valorado ?? ""}"></label>` : ""}
       ${destino === "visitado" ? `<label class="btn ancho">${I.cam} Fotos de antes (opcional)<input type="file" accept="image/*" multiple hidden name="fotos" data-tipo="antes"></label><small class="suave" id="nFotos"></small>` : ""}
       ${destino === "realizado" ? `<a class="btn ancho" href="#/lineas/${p.id}/realizados">📋 ${(p.lineas_realizadas || []).length ? "Revisar" : "Anotar"} trabajos realizados (códigos)</a>
         <label class="btn ancho">${I.cam} Fotos del trabajo terminado<input type="file" accept="image/*" multiple hidden name="fotos" data-tipo="despues"></label><small class="suave" id="nFotos"></small>
@@ -1264,11 +1425,11 @@ async function flujoInforme(pIn) {
   try { p = await conCarga("Preparando…", () => api.obtenerParte(pIn.id)); } catch { return; }
   const fotos = fotosParaEnvio(p);
   const hayLineas = (p.lineas_valoracion || []).length || (p.lineas_realizadas || []).length || p.importe_valorado != null;
-  let precios = sessionGet("precios") !== "0";
+  let precios = verPrecios() && sessionGet("precios") !== "0";
   const tipoInf = p.estado === "realizado" ? "trabajo terminado" : "visita";
   const s = abrirSheet(`
     <h2>Enviar ${tipoInf} a ${esc(DEST.nombre)}</h2>
-    ${hayLineas ? `<label class="check"><input type="checkbox" id="conPrecios" ${precios ? "checked" : ""}> Incluir precios en la valoración</label>
+    ${hayLineas && verPrecios() ? `<label class="check"><input type="checkbox" id="conPrecios" ${precios ? "checked" : ""}> Incluir precios en la valoración</label>
     <p class="suave" id="txtPrecios">${precios ? "Códigos, cantidades, precios y total." : "Solo códigos, descripción y cantidades (sin precios ni total)."}</p>` : ""}
     <div class="lista-botones">
       <button class="btn primario grande" id="envPDF" style="--c:#16a34a">${I.pdf}<span><b>PDF</b><small>Informe completo en un archivo PDF</small></span></button>
@@ -1394,7 +1555,7 @@ async function vistaLineas(id, tipo) {
     <div class="h3-fila"><h3>Líneas</h3>
       <span><button class="btn peq" id="libre">+ Línea libre</button> <button class="btn peq" id="dtoTodo">% Dto a todo</button></span></div>
     <div id="lineas"></div>
-    <div id="totales" class="totales"></div>
+    <div id="totales" class="totales precio"></div>
   </section>
   <div style="height:60px"></div>`;
 
@@ -1411,9 +1572,9 @@ async function vistaLineas(id, tipo) {
         <textarea class="desc" rows="2">${esc(l.descripcion)}</textarea>
         <div class="linea-num">
           <label>Cant.<input class="cant" type="number" inputmode="decimal" step="0.01" min="0" value="${l.cantidad}"></label>
-          <label>Precio €<input class="prec" type="number" inputmode="decimal" step="0.01" value="${l.precio}"></label>
-          <label>Dto %<input class="dto" type="number" inputmode="decimal" step="0.5" min="0" max="100" value="${l.dto || 0}"></label>
-          <div class="imp"><span>Importe</span><b>${fEuros(importeLinea(l))}</b></div>
+          <label class="precio">Precio €<input class="prec" type="number" inputmode="decimal" step="0.01" value="${l.precio}"></label>
+          <label class="precio">Dto %<input class="dto" type="number" inputmode="decimal" step="0.5" min="0" max="100" value="${l.dto || 0}"></label>
+          <div class="imp precio"><span>Importe</span><b>${fEuros(importeLinea(l))}</b></div>
         </div>
       </div>`).join("");
     $$(".linea", c).forEach((el) => {
@@ -1456,7 +1617,7 @@ async function vistaLineas(id, tipo) {
   let catSel = null;
   const pintarRes = (r, vacio) => {
     $("#resT").innerHTML = vacio ? '<p class="suave" style="padding:0 16px">Sin resultados. Puedes añadir una línea libre.</p>'
-      : r.map((c) => `<button class="res" data-c="${esc(c.codigo)}"><b>${esc(c.codigo)}</b><span>${esc(c.descripcion)}</span><em>${fEuros(c.precio)}</em></button>`).join("");
+      : r.map((c) => `<button class="res" data-c="${esc(c.codigo)}"><b>${esc(c.codigo)}</b><span>${esc(c.descripcion)}</span><em class="precio">${fEuros(c.precio)}</em></button>`).join("");
     $$("#resT .res").forEach((b) => b.onclick = () => anadir(S.tarifa.find((c) => c.codigo === b.dataset.c)));
   };
   const pintarCats = () => {
@@ -1506,7 +1667,7 @@ async function vistaTarifa() {
     let cat = null;
     $("#listaT").innerHTML = lista.map((c) => {
       const cab = !q.trim() && c.categoria !== cat ? `<h4 class="cat">${esc((cat = c.categoria) || "Otros")}</h4>` : "";
-      return `${cab}<button class="res ${c.activo === false ? "inactivo" : ""}" data-c="${esc(c.codigo)}"><b>${esc(c.codigo)}</b><span>${esc(c.descripcion)}</span><em>${fEuros(c.precio)}</em></button>`;
+      return `${cab}<button class="res ${c.activo === false ? "inactivo" : ""}" data-c="${esc(c.codigo)}"><b>${esc(c.codigo)}</b><span>${esc(c.descripcion)}</span><em class="precio">${fEuros(c.precio)}</em></button>`;
     }).join("") || '<p class="suave" style="padding:0 16px">Sin resultados.</p>';
     $$("#listaT .res").forEach((b) => b.onclick = () => editarCodigo(S.tarifa.find((c) => c.codigo === b.dataset.c)));
   };
@@ -1590,6 +1751,11 @@ async function vistaAjustes() {
       <label>IVA que se suma a las valoraciones (%, 0 = sin IVA)<input name="iva" type="number" step="1" min="0" value="${CFG.IVA ?? 21}"></label>
     </section>
     <section class="tarjeta">
+      <h3>Copia de seguridad</h3>
+      <button type="button" class="btn ancho" id="btnCopia">💾 Descargar copia en Excel</button>
+      <p class="suave">Todos los partes (también los de la papelera), las líneas de valoración y el historial. ${sessionGet("ultimaCopia") ? "Última copia desde este móvil: " + fFecha(sessionGet("ultimaCopia")) + "." : "Aún no has descargado ninguna desde este móvil."} Recomendable una vez al mes.</p>
+    </section>
+    <section class="tarjeta">
       <h3>Zonas</h3>
       <label>Una zona por línea: <i>Nombre: pueblo, pueblo, pueblo…</i><textarea name="zonas" rows="8">${esc((CFG.ZONAS || []).map((z) => z.nombre + ": " + (z.pueblos || []).join(", ")).join("\n"))}</textarea></label>
       <p class="suave">Cada parte se asigna a la zona cuyo pueblo aparece en su población. Los que no encajan salen en "Sin zona".</p>
@@ -1638,6 +1804,7 @@ async function vistaAjustes() {
     toast("Ajustes guardados", "ok");
   });
   $("#nuevoUsuario").onclick = sheetNuevoUsuario;
+  $("#btnCopia").onclick = copiaSeguridad;
   pintarUsuarios();
 }
 
@@ -1645,11 +1812,15 @@ async function pintarUsuarios() {
   const cont = $("#usuarios");
   if (!cont) return;
   let lista;
-  try { lista = (await api.adminUsuarios("listar")).usuarios; }
+  try {
+    lista = (await api.adminUsuarios("listar")).usuarios;
+    const ms = await api.miembros().catch(() => []);
+    lista = lista.map((u) => ({ ...u, ver_precios: ms.find((m) => m.user_id === u.id)?.ver_precios ?? u.ver_precios }));
+  }
   catch (e) { cont.innerHTML = `<p class="suave">No se pudieron cargar: ${esc(e.message)}</p>`; return; }
   cont.innerHTML = lista.map((u) => `
     <div class="usuario" data-id="${u.id}">
-      <div><b>${esc(u.nombre || "(sin alta en el equipo)")}</b>${u.es_admin ? ' <span class="etq">admin</span>' : ""}<br>
+      <div><b>${esc(u.nombre || "(sin alta en el equipo)")}</b>${u.es_admin ? ' <span class="etq">admin</span>' : ""}${!u.es_admin && u.ver_precios === false ? ' <span class="etq">sin precios</span>' : ""}<br>
         <small class="suave">${esc(u.email)}${u.ultimo_acceso ? " · último acceso " + fFecha(u.ultimo_acceso) : ""}</small></div>
       <button class="icono oscuro" data-acc="menu" aria-label="Opciones">${I.more}</button>
     </div>`).join("");
@@ -1688,6 +1859,7 @@ function menuUsuarioAdmin(u) {
     <div class="lista-botones">
       <button class="btn ancho" id="uNombre">Cambiar nombre</button>
       <button class="btn ancho" id="uPw">Poner contraseña nueva</button>
+      ${soyYo || u.es_admin ? "" : `<button class="btn ancho" id="uPrecios">${u.ver_precios === false ? "💶 Dejarle ver los precios" : "🙈 Ocultarle los precios"}</button>`}
       ${soyYo ? "" : `<button class="btn ancho" id="uAdmin">${u.es_admin ? "Quitar administrador" : "Hacer administrador"}</button>`}
       ${soyYo ? "" : '<button class="btn ancho peligro" id="uBorrar">Borrar usuario</button>'}
       <button class="btn texto ancho" data-cerrar>Cerrar</button>
@@ -1704,6 +1876,10 @@ function menuUsuarioAdmin(u) {
     await conCarga("Guardando…", () => api.adminUsuarios("password", { id: u.id, password: pw }));
     fin("Contraseña cambiada");
   };
+  $("#uPrecios", s)?.addEventListener("click", async () => {
+    await conCarga("Guardando…", () => api.editarMiembro(u.id, { ver_precios: u.ver_precios === false }));
+    fin(u.ver_precios === false ? "Ahora ve los precios" : "Precios ocultos para este usuario");
+  });
   $("#uAdmin", s)?.addEventListener("click", async () => {
     await conCarga("Guardando…", () => api.adminUsuarios("editar", { id: u.id, es_admin: !u.es_admin }));
     fin("Permisos cambiados");
