@@ -196,3 +196,6 @@ drop index if exists public.partes_aseg_exp_uq;
 create index if not exists partes_aseg_exp_idx on public.partes (lower(aseguradora), expediente);
 alter table public.partes add column if not exists repetido_de uuid references public.partes(id) on delete set null;
 alter table public.partes add column if not exists cambios_repetido text;
+
+-- ---------- Usuarios que no ven precios (solo se ocultan en pantalla) ----------
+alter table public.miembros add column if not exists ver_precios boolean not null default true;
