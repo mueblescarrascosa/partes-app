@@ -247,7 +247,6 @@ h4.cat { margin: 14px 4px 2px; font-size: 12px; text-transform: uppercase; color
 .rep-botones { display: flex; gap: 6px; }
 .rep-botones .btn { padding: 6px 12px; min-height: 0; }
 
-.filtros select#fZona { min-width: 0; }
 .zona { display: inline-block; font-size: .72em; padding: 1px 7px; border-radius: 99px; background: #e0f2fe; color: #075985; margin-left: 4px; vertical-align: middle; white-space: nowrap; }
 
 .rep-badge { font-size: .72em; padding: 1px 7px; border-radius: 99px; background: #fef3c7; color: #92400e; font-weight: 700; white-space: nowrap; }
@@ -265,3 +264,30 @@ h4.cat { margin: 14px 4px 2px; font-size: 12px; text-transform: uppercase; color
 .peq-chip { font-size: 12.5px; padding: 4px 10px; }
 .form-filtros { display: grid; gap: 10px; grid-template-columns: 1fr 1fr; }
 @media (max-width: 420px) { .form-filtros { grid-template-columns: 1fr; } }
+
+.chips.zonas { padding-top: 0; }
+.chips.zonas .chip { font-size: 13px; padding: 5px 11px; }
+
+/* Usuarios sin permiso de precios */
+.sin-precios .precio { display: none !important; }
+
+/* Campana y agenda */
+.barra-acc .icono { position: relative; }
+.badge { position: absolute; top: 2px; right: 0; background: #dc2626; color: #fff; font-size: 10px; min-width: 16px; height: 16px; line-height: 16px; border-radius: 99px; padding: 0 4px; text-align: center; }
+.badge:empty { display: none; }
+.resumen { display: grid; gap: 6px; margin: 8px 0; }
+.res-fila { display: flex; justify-content: space-between; align-items: center; gap: 10px; padding: 11px 12px; border-radius: 12px; border: 1px solid var(--borde, #e2e8f0); background: var(--card); color: var(--text); font-size: 15px; text-align: left; }
+.res-fila b { font-size: 17px; }
+.res-fila.aviso { border-color: #f59e0b; background: rgba(245, 158, 11, .08); }
+.res-fila.cero { opacity: .5; }
+.agenda { padding: 0 12px 40px; }
+.ag-dia { background: var(--card); border-radius: var(--r); padding: 12px; margin: 10px 0; }
+.ag-dia h3 { margin: 0 0 6px; font-size: 15px; }
+.ag-dia.pasadas { border: 1px solid #f59e0b; }
+.ag-item { display: flex; gap: 10px; align-items: center; padding: 9px 0; border-top: 1px solid var(--borde, #e2e8f0); cursor: pointer; }
+.ag-item:first-of-type { border-top: 0; }
+.ag-hora { font-weight: 800; min-width: 48px; font-size: 15px; }
+.ag-info { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+.ag-info small { opacity: .75; }
+.ag-acc { display: flex; gap: 6px; }
+.res-fila { width: 100%; margin: 0; box-sizing: border-box; }
