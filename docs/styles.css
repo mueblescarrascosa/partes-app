@@ -372,3 +372,6 @@ h4.cat { margin: 14px 4px 2px; font-size: 12px; text-transform: uppercase; color
 @media (prefers-color-scheme: dark) { .cx-badge { background: #4c1d95; color: #ede9fe; } .aviso.cx-info { background: #2e1065; color: #ede9fe; border-color: #5b21b6; } }
 button.accion { border: 0; font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
 .accion span { text-align: center; line-height: 1.2; }
+/* Mientras se escriben: códigos y descripción en mayúsculas */
+#fParte [name=expediente], #fParte [name=num_encargo], #fParte [name=num_siniestro], #fParte [name=poliza], #fParte [name=averia],
+#fLote [name=expediente], #fLote [name=num_encargo], #fLote [name=averia] { text-transform: uppercase; }
