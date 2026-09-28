@@ -22,6 +22,7 @@ async function cargarAjustes() {
     if (a.IVA != null && a.IVA !== "") CFG.IVA = Number(a.IVA);
     if (a.WHATSAPP_APP) CFG.WHATSAPP_APP = a.WHATSAPP_APP;
     if (Array.isArray(a.ZONAS)) CFG.ZONAS = a.ZONAS;
+    if (a.PRECIOS_IA && typeof a.PRECIOS_IA === "object") CFG.PRECIOS_IA = a.PRECIOS_IA;
     ajustesCargados = true;
   } catch { /* se usan los valores de config.js */ }
 }
@@ -487,6 +488,34 @@ async function copiaSeguridad() {
     });
     toast("Copia descargada", "ok");
   } catch { /* conCarga avisa */ }
+}
+
+// ------------------------------------------------------------------ Gasto de la IA
+async function pintarUsoIA() {
+  const cont = $("#usoIA"); if (!cont) return;
+  const hoy = new Date(), m0 = new Date(hoy.getFullYear(), hoy.getMonth(), 1), m1 = new Date(hoy.getFullYear(), hoy.getMonth() - 1, 1);
+  let filas;
+  try { filas = await api.usoIA(m1.toISOString()); }
+  catch { cont.innerHTML = '<p class="suave">Aún no hay datos de gasto (se empiezan a contar desde esta versión).</p>'; return; }
+  const usd = (n) => n.toLocaleString("es-ES", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " $";
+  const resumen = (xs) => {
+    const cl = xs.filter((x) => x.proveedor !== "gemini"), ge = xs.length - cl.length;
+    const total = xs.reduce((a, x) => a + Number(x.coste_usd || 0), 0);
+    const conPrecio = cl.filter((x) => x.coste_usd != null).length;
+    return { n: xs.length, cl: cl.length, ge, total, media: conPrecio ? total / conPrecio : 0 };
+  };
+  const sinPrecio = filas.filter((x) => x.coste_usd == null && x.proveedor !== "gemini");
+  const este = resumen(filas.filter((x) => new Date(x.created_at) >= m0));
+  const ant = resumen(filas.filter((x) => new Date(x.created_at) < m0));
+  const mes = (d) => d.toLocaleDateString("es-ES", { month: "long" });
+  cont.innerHTML = `
+    <div class="kpis">
+      <div class="kpi"><b>${este.n}</b><span>lecturas en ${mes(hoy)}</span></div>
+      <div class="kpi"><b>${usd(este.total)}</b><span>gastado en ${mes(hoy)}</span></div>
+      <div class="kpi"><b>${este.media ? este.media.toLocaleString("es-ES", { minimumFractionDigits: 3, maximumFractionDigits: 3 }) + " $" : "—"}</b><span>media por lectura (Claude)</span></div>
+    </div>
+    ${sinPrecio.length ? `<p class="aviso-rojo">⚠️ ${sinPrecio.length} lectura${sinPrecio.length > 1 ? "s" : ""} con un modelo sin precio (<b>${esc([...new Set(sinPrecio.map((x) => x.modelo))].join(", "))}</b>): no se están sumando al gasto. Añade su tarifa en "Tarifas de la IA".</p>` : ""}
+    <p class="suave">${este.cl} con Claude${este.ge ? ` · ${este.ge} con Gemini (gratis)` : ""}. ${mes(m1).charAt(0).toUpperCase() + mes(m1).slice(1)}: ${ant.n} lecturas · ${usd(ant.total)}.</p>`;
 }
 
 function tarjetaParte(p) {
@@ -1915,6 +1944,14 @@ async function vistaAjustes() {
       <label>IVA que se suma a las valoraciones (%, 0 = sin IVA)<input name="iva" type="number" step="1" min="0" value="${CFG.IVA ?? 21}"></label>
     </section>
     <section class="tarjeta">
+      <h3>Gasto de la IA</h3>
+      <div id="usoIA"><p class="suave">Cargando…</p></div>
+      <p class="suave">Coste calculado con las tarifas de abajo (Gemini gratuito = 0 $). El saldo que te queda se ve en console.anthropic.com → Settings → Billing. Compara una vez al mes esta cifra con la de console.anthropic.com → Usage: si no coinciden, han cambiado los precios.</p>
+      <label>Tarifas de la IA ($ por millón de tokens) — una por línea: <i>modelo: entrada, salida</i>
+        <textarea name="precios_ia" rows="3">${esc(Object.entries(CFG.PRECIOS_IA || {}).map(([m, [a, b]]) => `${m}: ${a}, ${b}`).join("\n"))}</textarea></label>
+      <p class="suave">Los precios oficiales están en claude.com/pricing (apartado API). Un cambio aquí solo afecta a las lecturas nuevas.</p>
+    </section>
+    <section class="tarjeta">
       <h3>Copia de seguridad</h3>
       <button type="button" class="btn ancho" id="btnCopia">💾 Descargar copia en Excel</button>
       <p class="suave">Todos los partes (también los de la papelera), las líneas de valoración y el historial. ${sessionGet("ultimaCopia") ? "Última copia desde este móvil: " + fFecha(sessionGet("ultimaCopia")) + "." : "Aún no has descargado ninguna desde este móvil."} Recomendable una vez al mes.</p>
@@ -1957,6 +1994,10 @@ async function vistaAjustes() {
       MENSAJE_CLIENTE: f.mensaje.trim(),
       IVA: Number(f.iva) || 0,
       WHATSAPP_APP: f.wa_app || "business",
+      PRECIOS_IA: Object.fromEntries(f.precios_ia.split("\n").map((l) => l.trim()).filter(Boolean).map((l) => {
+        const [m, r = ""] = l.split(":"); const [a, b] = r.split(",").map((x) => Number(String(x).trim().replace(",", ".")));
+        return [m.trim(), [a || 0, b || 0]];
+      }).filter(([m]) => m)),
       ZONAS: f.zonas.split("\n").map((l) => l.trim()).filter(Boolean).map((l) => {
         const i = l.indexOf(":");
         return i < 0 ? { nombre: l, pueblos: [l] } : { nombre: l.slice(0, i).trim(), pueblos: l.slice(i + 1).split(",").map((x) => x.trim()).filter(Boolean) };
@@ -1969,6 +2010,7 @@ async function vistaAjustes() {
   });
   $("#nuevoUsuario").onclick = sheetNuevoUsuario;
   $("#btnCopia").onclick = copiaSeguridad;
+  pintarUsoIA();
   pintarUsuarios();
 }
 

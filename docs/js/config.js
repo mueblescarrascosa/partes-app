@@ -36,6 +36,9 @@ window.APP_CONFIG = {
     { nombre: "Las Villas", pueblos: ["Villanueva del Arzobispo", "Villacarrillo", "Iznatoraf", "Sorihuela del Guadalimar", "Mogón"] },
   ],
 
+  // Tarifas de la IA en $ por millón de tokens [entrada, salida] (editables en Ajustes)
+  PRECIOS_IA: { "claude-sonnet-4-5": [3, 15], "claude-haiku-4-5": [1, 5] },
+
   // Mensaje inicial al abrir WhatsApp con el cliente
   MENSAJE_CLIENTE: "Hola {nombre}, le escribo de {empresa} por el parte de {aseguradora} (exp. {expediente}) por {averia_corta}. ¿Cuándo le vendría bien que pasemos a verlo?",
 };

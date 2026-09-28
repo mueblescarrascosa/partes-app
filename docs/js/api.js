@@ -38,6 +38,9 @@ function crearApiSupabase() {
     async listarPartes() {
       return ok(await sb.from("partes").select("*").is("borrado_at", null).order("updated_at", { ascending: false }).limit(3000));
     },
+    async usoIA(desde) {
+      return ok(await sb.from("lecturas_ia").select("created_at,proveedor,modelo,tokens_in,tokens_out,coste_usd").gte("created_at", desde).order("created_at", { ascending: false }).limit(5000));
+    },
     async exportarTodo() {
       const [p, e] = await Promise.all([
         sb.from("partes").select("*").order("created_at").limit(10000),
@@ -160,6 +163,12 @@ function crearApiDemo() {
     async listarPartes() { return db.partes.filter((p) => !p.borrado_at).sort((a, b) => b.updated_at.localeCompare(a.updated_at)); },
     async listarPapelera() { return db.partes.filter((p) => p.borrado_at); },
     async exportarTodo() { return { partes: db.partes, eventos: db.eventos }; },
+    async usoIA() { return (db.usoIA ??= [
+      { created_at: new Date().toISOString(), proveedor: "anthropic", modelo: "claude-sonnet-4-5", tokens_in: 4100, tokens_out: 380, coste_usd: 0.0180 },
+      { created_at: new Date(Date.now() - 864e5).toISOString(), proveedor: "anthropic", modelo: "claude-sonnet-4-5", tokens_in: 6900, tokens_out: 420, coste_usd: 0.0270 },
+      { created_at: new Date(Date.now() - 2 * 864e5).toISOString(), proveedor: "gemini", modelo: "gemini-flash-latest", tokens_in: 3000, tokens_out: 350, coste_usd: 0 },
+      { created_at: new Date(Date.now() - 40 * 864e5).toISOString(), proveedor: "anthropic", modelo: "claude-sonnet-4-5", tokens_in: 4000, tokens_out: 400, coste_usd: 0.0180 },
+      { created_at: new Date().toISOString(), proveedor: "anthropic", modelo: "claude-sonnet-5", tokens_in: 4000, tokens_out: 400, coste_usd: null }]); },
     async aPapelera(id) { const p = db.partes.find((x) => x.id === id); p.borrado_at = ahora(); guardar(); },
     async restaurarParte(id) { const p = db.partes.find((x) => x.id === id); p.borrado_at = null; guardar(); },
     async editarEvento(id, c) { const e = db.eventos.find((x) => x.id === id); Object.assign(e, c); guardar(); },
