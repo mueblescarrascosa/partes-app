@@ -375,3 +375,6 @@ button.accion { border: 0; font: inherit; font-size: 13px; font-weight: 600; cur
 /* Mientras se escriben: códigos y descripción en mayúsculas */
 #fParte [name=expediente], #fParte [name=num_encargo], #fParte [name=num_siniestro], #fParte [name=poliza], #fParte [name=averia],
 #fLote [name=expediente], #fLote [name=num_encargo], #fLote [name=averia] { text-transform: uppercase; }
+.aviso.lote-pend { background: #dbeafe; color: #1e3a8a; }
+.aviso.lote-pend .dos { margin-top: 8px; display: flex; gap: 8px; }
+@media (prefers-color-scheme: dark) { .aviso.lote-pend { background: #1e3a8a; color: #dbeafe; } }
