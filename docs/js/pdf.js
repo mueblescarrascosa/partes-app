@@ -222,13 +222,19 @@ export async function generarInforme(parte, api, miembros = [], opc = {}) {
     doc.text(`Página ${i} de ${n}`, W - M, ALTO - 8, { align: "right" });
   }
 
-  const nombreArchivo = `${esFinal ? "Terminado" : (cx ? "Presupuesto" : "Visita")}_${slug(parte.aseguradora) || "Parte"}_${slug(parte.expediente) || parte.id.slice(0, 8)}${parte.direccion ? "_" + slug(parte.direccion, 28) : ""}${parte.poblacion ? "_" + slug(parte.poblacion, 20) : ""}.pdf`;
+  const nombreArchivo = `${empresaArchivo()}_${esFinal ? "Terminado" : (cx ? "Presupuesto" : "Visita")}_${slug(parte.aseguradora, 20).replace(/-/g, "") || "Parte"}_${slug(parte.expediente) || parte.id.slice(0, 8)}.pdf`;
   return { blob: doc.output("blob"), nombre: nombreArchivo };
 }
 
 // Trozo de nombre de archivo seguro (sin tildes ni espacios): "C/ Doctor Muñoz, 20" → "C-Doctor-Munoz-20"
 export function slug(t, max = 40) {
   return String(t || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^A-Za-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, max).replace(/-+$/, "");
+}
+
+// "Muebles Carrascosa SL" → "Muebles_Carrascosa": al principio de todos los archivos, para que se vea de quién vienen
+export function empresaArchivo() {
+  const n = slug(window.APP_CONFIG?.EMPRESA?.nombre || "Muebles Carrascosa", 60).split("-").filter((w) => !/^(sl|sa|slu|sll)$/i.test(w));
+  return n.join("_") || "Muebles_Carrascosa";
 }
 
 // ---- Relación mensual de trabajos terminados (para facturar a MULTIBETT)

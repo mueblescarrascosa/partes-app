@@ -710,23 +710,16 @@ async function vistaFacturacion() {
     const lineasDe = (p) => ((p.lineas_realizadas || []).length ? p.lineas_realizadas : (p.lineas_valoracion || []));
     const filasExp = () => elegidos.map((p) => ({ ...p, importe: importeParte(p) || 0, lineas: lineasDe(p),
       trabajo: ((p.lineas_realizadas || []).length ? p.lineas_realizadas : (p.lineas_valoracion || [])).map((l) => `${l.codigo || ""} ${l.descripcion || ""}`.trim()).join("; ") || (p.averia || "").slice(0, 90) }));
-    // Nombre que dice de dónde viene: una sola obra → aseguradora + expediente + calle; varias → mes + aseguradoras
-    const nombreRelacion = (ext, ref) => {
-      const slug = (t) => String(t || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^A-Za-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
-      const emp = slug(CFG.EMPRESA?.nombre || "").split("-").filter((w) => !/^(sl|sa|slu)$/i.test(w)).slice(0, 2).join("-");
-      const fra = ref ? `_Fra-${slug(ref)}` : "";
-      if (elegidos.length === 1) {
-        const p = elegidos[0];
-        return `Relacion_${emp}_${slug(p.aseguradora) || "Parte"}_${slug(p.expediente) || ""}${p.direccion ? "_" + slug(p.direccion).slice(0, 28).replace(/-+$/, "") : ""}${p.poblacion ? "_" + slug(p.poblacion).slice(0, 20) : ""}${fra}.${ext}`;
-      }
-      const aseg = [...new Set(elegidos.map((p) => slug(p.aseguradora)).filter(Boolean))];
-      return `Relacion_${emp}_${mes}_${aseg.length <= 3 ? aseg.join("-") : "Varias"}_${elegidos.length}-trabajos${fra}.${ext}`;
+    // Todos los archivos empiezan por el nombre de la empresa, para que MULTIBETT vea de quién vienen
+    const nombreRelacion = async (ext, ref) => {
+      const { empresaArchivo, slug } = await cargarPDF();
+      return `${empresaArchivo()}_Relacion_${mes}${ref ? "_Fra-" + slug(ref) : ""}.${ext}`;
     };
     // Genera el PDF y lo comparte (o descarga). Devuelve true si se ha enviado/descargado.
     const enviarPDFRelacion = async (ref) => {
       const blob = await conCarga("Generando PDF…", async () => (await cargarPDF()).generarRelacion(filasExp(),
         `RELACIÓN DE TRABAJOS · ${nombreMes(mes).toUpperCase()}${ref ? " · FRA. " + ref : ""}`, DEST.nombre, IVA_FACT()));
-      const nombre = nombreRelacion("pdf", ref);
+      const nombre = await nombreRelacion("pdf", ref);
       const file = new File([blob], nombre, { type: "application/pdf" });
       if (navigator.canShare?.({ files: [file] })) {
         try { await navigator.share({ files: [file], title: nombre }); return true; }
@@ -765,7 +758,7 @@ async function vistaFacturacion() {
           const t = conIVA(filas.reduce((a, f) => a + (f["Importe sin IVA (€)"] || 0), 0));
           filas.push({}, { Trabajo: "Base imponible", "Importe sin IVA (€)": t.base }, { Trabajo: `IVA ${IVA_FACT()}%`, "Importe sin IVA (€)": t.iva }, { Trabajo: "TOTAL", "Importe sin IVA (€)": t.total });
           const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(filas), nombreMes(mes).slice(0, 30));
-          descargar(new Blob([XLSX.write(wb, { bookType: "xlsx", type: "array" })], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }), nombreRelacion("xlsx"));
+          descargar(new Blob([XLSX.write(wb, { bookType: "xlsx", type: "array" })], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }), await nombreRelacion("xlsx"));
         });
       } catch { /* conCarga avisa */ }
     });
