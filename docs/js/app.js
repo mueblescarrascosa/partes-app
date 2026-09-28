@@ -89,6 +89,9 @@ async function conCarga(texto, fn) {
   finally { cargando(false); }
 }
 
+// ------------------------------------------------------------------ Copyright y versión
+const pieCopyright = () => `<footer class="copyright">© ${new Date().getFullYear()} ${esc(CFG.AUTOR || "Alfonso Carrascosa Martínez")} · Todos los derechos reservados<br>${CFG.IDEA ? "Idea original: " + esc(CFG.IDEA) + "<br>" : ""}Partes · versión ${esc(CFG.VERSION || "")}${CFG.FECHA_VERSION ? " (" + esc(CFG.FECHA_VERSION) + ")" : ""}</footer>`;
+
 // ------------------------------------------------------------------ Router
 window.addEventListener("hashchange", router);
 async function router() {
@@ -134,6 +137,7 @@ function vistaLogin() {
       <button class="btn primario ancho" type="submit">Entrar</button>
       <button class="btn texto ancho" type="button" id="olvido">He olvidado la contraseña</button>
     </form>
+    ${pieCopyright()}
   </div>`;
   $("#fLogin").addEventListener("submit", async (e) => {
     e.preventDefault();
@@ -752,7 +756,8 @@ function menuUsuario() {
       <button class="btn ancho" id="exportar">Exportar partes (CSV)</button>
       ${api.modo === "supabase" ? '<button class="btn ancho peligro" id="salir">Cerrar sesión</button>' : ""}
       <button class="btn texto ancho" data-cerrar>Cerrar</button>
-    </div>`);
+    </div>
+    ${pieCopyright()}`);
   $("#salir", s)?.addEventListener("click", async () => { await api.salir(); S.yo = null; cerrarSheet(); router(); });
   $("#exportar", s).addEventListener("click", exportarCSV);
   $("#irPapelera", s).addEventListener("click", () => { cerrarSheet(); location.hash = "/papelera"; });
@@ -2203,6 +2208,7 @@ async function vistaAjustes() {
     <div class="h3-fila"><h3>Usuarios</h3><button class="btn peq" id="nuevoUsuario">+ Añadir</button></div>
     <div id="usuarios"><p class="suave">Cargando…</p></div>
   </section>
+  ${pieCopyright()}
   <div style="height:40px"></div>`;
 
   $("#volver").onclick = () => (location.hash = "/");

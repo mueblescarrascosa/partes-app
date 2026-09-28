@@ -5,6 +5,12 @@
 //  (datos solo en este navegador, lectura de partes simulada).
 // ============================================================
 window.APP_CONFIG = {
+  // Versión de la app y autor (se muestra en el pie de la app)
+  VERSION: "2.0.0",
+  FECHA_VERSION: "28/09/2026",
+  AUTOR: "Alfonso Carrascosa Martínez",
+  IDEA: "José Carlos Carrascosa Martínez",
+
   SUPABASE_URL: "https://kseyndjbmkaflpoqitsj.supabase.co",
   SUPABASE_ANON_KEY: "sb_publishable_CbwajQX7DgAoK3fV6GVU5g_18CWeqMG", // clave pública (la protege RLS)
 
