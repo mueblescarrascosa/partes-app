@@ -290,3 +290,6 @@ alter table public.partes enable trigger partes_updated_at;
 -- Bocetos (dibujos internos): nuevo tipo de foto 'boceto'
 alter table public.fotos drop constraint if exists fotos_tipo_check;
 alter table public.fotos add constraint fotos_tipo_check check (tipo in ('antes','despues','otra','boceto'));
+
+-- 2.7: códigos autorizados (lo que se factura)
+alter table public.partes add column if not exists lineas_autorizadas jsonb not null default '[]';
