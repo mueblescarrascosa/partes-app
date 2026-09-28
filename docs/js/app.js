@@ -1753,13 +1753,14 @@ const fotosDe = (p) => (p.fotos || []).filter((f) => f.tipo !== "boceto");
 const bocetosDe = (p) => (p.fotos || []).filter((f) => f.tipo === "boceto");
 const cargarBoceto = () => import("./boceto.js");
 
-async function nuevoBoceto(p, fondo = null, reemplaza = null) {
+async function nuevoBoceto(p, fondo = null, reemplaza = null, esFoto = false) {
   let abrirBoceto;
   try { ({ abrirBoceto } = await cargarBoceto()); } catch { toast("No se pudo abrir el editor de dibujo", "error"); return; }
-  const blob = await abrirBoceto({ fondo, titulo: `Boceto · ${p.nombre || p.expediente || ""}` });
+  const blob = await abrirBoceto({ fondo, foto: esFoto || fondo?.type === "image/jpeg", titulo: `${esFoto ? "Sobre foto" : "Boceto"} · ${p.nombre || p.expediente || ""}` });
   if (!blob) return;
   await conCarga("Guardando dibujo…", async () => {
-    const path = await api.subirArchivo(`${p.id}/boceto_${Date.now()}.png`, blob, "image/png");
+    const jpg = blob.type === "image/jpeg";
+    const path = await api.subirArchivo(`${p.id}/boceto_${Date.now()}.${jpg ? "jpg" : "png"}`, blob, jpg ? "image/jpeg" : "image/png");
     await api.anadirFoto(p.id, path, "boceto");
     if (reemplaza) await api.borrarFoto(reemplaza).catch(() => {});
   });
@@ -1812,7 +1813,24 @@ async function pintarFotos(p) {
   for (const f of fotos) {
     const fig = cont.querySelector(`figure[data-id="${f.id}"]`);
     api.urlArchivo(f.path).then((u) => { fig.querySelector("img").src = u; }).catch(() => {});
-    fig.querySelector("img").addEventListener("click", async () => window.open(await api.urlArchivo(f.path), "_blank"));
+    fig.querySelector("img").addEventListener("click", () => {
+      const s = abrirSheet(`
+        <h2>Foto</h2>
+        <div class="lista-botones">
+          <button class="btn ancho" id="fVer">👁 Verla en grande</button>
+          <button class="btn ancho" id="fDibujar">✏️ Dibujar encima (medidas, daños…)</button>
+          <button class="btn texto ancho" data-cerrar>Cerrar</button>
+        </div>
+        <p class="suave">El dibujo se guarda aparte, en Bocetos (interno). La foto original no se toca.</p>`);
+      $("#fVer", s).onclick = async () => { cerrarSheet(); window.open(await api.urlArchivo(f.path), "_blank"); };
+      $("#fDibujar", s).onclick = async () => {
+        cerrarSheet();
+        let fondo;
+        try { fondo = await conCarga("Abriendo foto…", () => api.descargarArchivo(f.path)); } catch { return; }
+        if (!fondo) return toast("No se pudo abrir la foto", "error");
+        nuevoBoceto(p, fondo, null, true);
+      };
+    });
     fig.querySelector(".borrar-foto").addEventListener("click", async () => {
       if (!confirm("¿Borrar esta foto?")) return;
       await conCarga("Borrando…", () => api.borrarFoto(f));

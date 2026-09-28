@@ -4,7 +4,7 @@
 const COLORES = ["#111827", "#dc2626", "#2563eb", "#16a34a"];
 const GROSORES = [3, 7, 14];
 
-export function abrirBoceto({ fondo = null, titulo = "Boceto" } = {}) {
+export function abrirBoceto({ fondo = null, foto = false, titulo = "Boceto" } = {}) {
   return new Promise(async (resolver) => {
     // Tamaño lógico fijo (el dibujo no se deforma si se gira el móvil); lado largo 2000 px
     let W = 2000, H = 1400;
@@ -195,7 +195,8 @@ export function abrirBoceto({ fondo = null, titulo = "Boceto" } = {}) {
     cont.querySelector('[data-acc="guardar"]').onclick = () => {
       if (!st.ops.length && !imgFondo) { alert("El dibujo está vacío."); return; }
       pintar();
-      canvas.toBlob((b) => { window.removeEventListener("popstate", alAtras); history.back(); salir(b); }, "image/png");
+      // Sobre una foto se guarda en JPG (mucho más ligero); los dibujos a mano, en PNG (trazos nítidos)
+      canvas.toBlob((b) => { window.removeEventListener("popstate", alAtras); history.back(); salir(b); }, foto ? "image/jpeg" : "image/png", 0.88);
     };
 
     window.addEventListener("resize", ajustar);
