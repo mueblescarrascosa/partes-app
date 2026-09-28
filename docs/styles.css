@@ -106,7 +106,7 @@ label.btn.grande { display: flex; }
 .cabecera .dir::after { content: " ↗"; color: var(--muted); }
 .tel-txt { color: var(--muted); font-size: 15px; }
 .tel2 { font-size: 14px; color: var(--muted); margin-top: 6px; }
-.acciones { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 12px; }
+.acciones { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 12px; }
 .accion { display: grid; justify-items: center; gap: 4px; padding: 12px 4px; border-radius: 12px; background: var(--bg); color: var(--text); text-decoration: none; font-size: 13px; font-weight: 600; }
 .accion.wa { background: var(--wa); color: #fff; }
 .accion.off { opacity: .35; pointer-events: none; }
@@ -370,3 +370,5 @@ h4.cat { margin: 14px 4px 2px; font-size: 12px; text-transform: uppercase; color
 .cx-badge { font-size: .72em; padding: 1px 7px; border-radius: 99px; background: #ede9fe; color: #5b21b6; font-weight: 700; white-space: nowrap; }
 .aviso.cx-info { background: #ede9fe; color: #4c1d95; border-color: #c4b5fd; }
 @media (prefers-color-scheme: dark) { .cx-badge { background: #4c1d95; color: #ede9fe; } .aviso.cx-info { background: #2e1065; color: #ede9fe; border-color: #5b21b6; } }
+button.accion { border: 0; font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
+.accion span { text-align: center; line-height: 1.2; }
