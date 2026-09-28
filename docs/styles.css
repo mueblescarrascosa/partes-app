@@ -336,3 +336,7 @@ h4.cat { margin: 14px 4px 2px; font-size: 12px; text-transform: uppercase; color
 .factura small { opacity: .8; }
 .factura.vencida b { color: #dc2626; }
 .factura.cobrada { opacity: .6; }
+.fact-total { flex-wrap: wrap; gap: 6px; }
+.fact-desglose { display: grid; grid-template-columns: auto auto; gap: 2px 14px; text-align: right; margin-left: auto; font-size: 14px; }
+.fact-desglose b { font-size: 14px; }
+.fact-desglose b.grande { font-size: 18px; }
