@@ -85,6 +85,18 @@ export async function comprimirImagen(file, maxLado = 1600, calidad = 0.82) {
   ctx.drawImage(bmp, 0, 0, c.width, c.height);
   return new Promise((res) => c.toBlob(res, "image/jpeg", calidad));
 }
+/** Gira una imagen (blob) en sentido horario: 90, 180 o 270 grados */
+export async function girarImagen(blob, grados, calidad = 0.88) {
+  const bmp = await cargarImagen(blob);
+  const g = ((Number(grados) % 360) + 360) % 360;
+  const lado = g === 90 || g === 270;
+  const c = document.createElement("canvas");
+  c.width = lado ? bmp.height : bmp.width; c.height = lado ? bmp.width : bmp.height;
+  const ctx = c.getContext("2d");
+  ctx.translate(c.width / 2, c.height / 2); ctx.rotate((g * Math.PI) / 180);
+  ctx.drawImage(bmp, -bmp.width / 2, -bmp.height / 2);
+  return new Promise((res) => c.toBlob(res, "image/jpeg", calidad));
+}
 async function cargarImagen(file) {
   if ("createImageBitmap" in window) {
     try { return await createImageBitmap(file, { imageOrientation: "from-image" }); } catch { /* fallback */ }

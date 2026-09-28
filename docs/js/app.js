@@ -2,7 +2,7 @@ import { api } from "./api.js";
 import {
   $, $$, esc, ESTADOS, estadoInfo, idxEstado, colorAseg, linkLlamar, linkWhatsApp, linkMapa,
   fFecha, fFechaHora, fEuros, hace, toLocalInput, blobABase64, comprimirImagen, panelFirma, toast,
-  importeLinea, totalesLineas, buscarEnTarifa, codigoAdicional, chipDias, recortarImagen, linkCalendario, diasParte, zonaDe,
+  importeLinea, totalesLineas, buscarEnTarifa, codigoAdicional, chipDias, recortarImagen, linkCalendario, diasParte, zonaDe, girarImagen,
 } from "./util.js";
 // pdf.js se carga solo cuando hace falta (si falla, no impide arrancar la app)
 const cargarPDF = () => import("./pdf.js");
@@ -817,6 +817,34 @@ function menuNuevo() {
   $("#nMano", s).onclick = () => { S.borrador = { datos: {} }; cerrarSheet(); location.hash = "/nuevo"; };
 }
 
+// Lee con IA; si la foto está girada, la endereza y la vuelve a leer (las tablas giradas se leen mal).
+// Devuelve { datos, lectura, giro } — giro = grados aplicados (para girar también la foto que se guarda).
+async function leerConIA(lectura, mime, aviso = () => {}) {
+  let datos = await api.extraer(await blobABase64(lectura), mime);
+  if (mime === "application/pdf") return { datos, lectura, giro: 0 };
+  let giro = 0;
+  for (let i = 0; i < 2; i++) {
+    const g = ((Number(datos?.orientacion) || 0) % 360 + 360) % 360;
+    if (![90, 180, 270].includes(g)) break;
+    aviso("La foto está girada: enderezando y leyendo otra vez…");
+    lectura = await girarImagen(lectura, g);
+    giro = (giro + g) % 360;
+    datos = await api.extraer(await blobABase64(lectura), mime);
+  }
+  return { datos, lectura, giro };
+}
+
+// Avisos de datos que parecen mal colocados
+function avisosLectura(d = {}) {
+  const out = [], sin = (x) => String(x || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().trim();
+  if (d.nombre && d.tramitador_nombre && sin(d.nombre) === sin(d.tramitador_nombre)) out.push("El nombre del cliente es igual que el del tramitador/gestor");
+  if (d.nombre && /^(vecino|asegurado|cliente)$/i.test(d.nombre.trim())) out.push("El nombre del cliente no es un nombre");
+  const dir = d.direccion || "";
+  if (dir && (dir.length > 60 || /\b(da[ñn]os?|humedad|aver[ií]a|valorar|reparar|sustituir|puerta|mueble|filtraci|fuga|rotura)\b/i.test(dir))) out.push("La dirección parece la descripción del daño");
+  if (dir && !/\d/.test(dir) && !/s\/n/i.test(dir)) out.push("La dirección no tiene número");
+  return out;
+}
+
 async function procesarArchivo(file) {
   if (!file) return;
   const esPDF = file.type === "application/pdf" || /\.pdf$/i.test(file.name);
@@ -834,8 +862,9 @@ async function procesarArchivo(file) {
     }
     if (lectura.size > 9.5 * 1024 * 1024) throw new Error("El archivo pesa demasiado (máx. 9 MB)");
     cargando(true, "Leyendo el parte con IA…");
-    const datos = await api.extraer(await blobABase64(lectura), mime);
-    S.borrador = { datos: normalizar(datos), archivo: blob, mime };
+    const r = await leerConIA(lectura, mime, (t) => cargando(true, t));
+    if (r.giro) blob = r.lectura === lectura ? blob : (blob === lectura ? r.lectura : await girarImagen(blob, r.giro));
+    S.borrador = { datos: normalizar(r.datos), archivo: blob, mime };
     irANuevo();
   } catch (e) {
     console.error(e);
@@ -1110,7 +1139,9 @@ async function procesarLote() {
         it.mime = esPDF ? "application/pdf" : "image/jpeg";
         it.blob = esPDF ? it.file : await comprimirImagen(it.file, 2000, 0.85);
         if (it.blob.size > 9.5 * 1024 * 1024) throw new Error("pesa más de 9 MB");
-        it.datos = normalizar(await api.extraer(await blobABase64(it.blob), it.mime));
+        const r = await leerConIA(it.blob, it.mime);
+        it.blob = r.lectura; it.giro = r.giro;
+        it.datos = normalizar(r.datos);
         it.rep = await analizarRepeticion(it.datos).catch(() => null);
         it.estado = "ok";
       } catch (e) { it.estado = "error"; it.error = e.message; it.sel = false; }
@@ -1136,6 +1167,7 @@ function revisarLote() {
     if (!d.aseguradora) it.avisos.push({ t: "⚠️ Sin aseguradora" });
     if (!d.expediente) it.avisos.push({ t: "⚠️ Sin expediente" });
     if (!/^(\+?34)?[6-9]\d{8}$/.test(d.telefono || "")) it.avisos.push({ t: "⚠️ Sin teléfono completo" });
+    for (const t of avisosLectura(d)) it.avisos.push({ t: "⚠️ " + t, grave: true });
   }
 }
 
@@ -1332,6 +1364,7 @@ async function vistaFormulario(id) {
           ? '<p class="aviso-campo">⚠️ Comprueba el teléfono cifra a cifra con el papel.</p>'
           : '<p class="aviso-campo">⚠️ No se ha podido leer un teléfono completo (9 cifras). Míralo en la descripción del trabajo o pídeselo al tramitador.</p>')
         : ""}
+      ${!id && S.borrador?.archivo ? avisosLectura(p).map((t) => `<p class="aviso-campo">⚠️ ${esc(t)}: revísalo con el papel.</p>`).join("") : ""}
       <div class="dos">${campo("telefono", "Teléfono", "tel")}${campo("telefono2", "Teléfono 2", "tel")}</div>
       ${campo("direccion", "Dirección")}
       <div class="tres">${campo("codigo_postal", "C.P.", "text", 'inputmode="numeric"')}${campo("poblacion", "Población")}${campo("provincia", "Provincia")}</div>
@@ -1672,8 +1705,9 @@ function releerDocumento(p) {
         blob = await comprimirImagen(grande, 2000, 0.85);
         lectura = recorte === grande ? blob : await comprimirImagen(recorte, 2000, 0.88);
       }
-      const b64 = await blobABase64(lectura);
-      const datos = normalizar(await conCarga("Leyendo con IA…", () => api.extraer(b64, mime)));
+      const r = await conCarga("Leyendo con IA…", () => leerConIA(lectura, mime));
+      if (r.giro) blob = blob === lectura ? r.lectura : await girarImagen(blob, r.giro);
+      const datos = normalizar(r.datos);
       const vacios = Object.keys(datos).filter((k) => datos[k] && (p[k] == null || p[k] === "") && k in p);
       const distintos = Object.keys(datos).filter((k) => datos[k] && p[k] && String(p[k]) !== datos[k] && k in p);
       const s = abrirSheet(`
