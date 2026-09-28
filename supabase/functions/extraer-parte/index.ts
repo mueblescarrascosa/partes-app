@@ -62,6 +62,21 @@ Reglas:
 - Fechas en formato AAAA-MM-DD; en España las fechas del documento van como DD/MM/AAAA. Copia el día cifra a cifra tal como está escrito; no uses la fecha de hoy ni la calcules.`;
 
 type Entrada = { data: string; mime: string };
+type Uso = { modelo: string; tokens_in: number; tokens_out: number; coste_usd: number | null };
+
+// Precio en $ por millón de tokens [entrada, salida]. Se pueden cambiar en la app (Ajustes → Tarifas de la IA).
+// Gemini en plan gratuito = 0. Un modelo sin precio se guarda con coste null para que la app avise.
+const PRECIOS_BASE: Record<string, [number, number]> = {
+  "claude-sonnet-4-5": [3, 15],
+  "claude-haiku-4-5": [1, 5],
+};
+function coste(modelo: string, tin: number, tout: number, precios: Record<string, [number, number]>) {
+  const tabla = { ...PRECIOS_BASE, ...precios };
+  const clave = Object.keys(tabla).sort((a, b) => b.length - a.length).find((k) => modelo.startsWith(k));
+  if (!clave) return modelo.startsWith("gemini") ? 0 : null;
+  const p = tabla[clave];
+  return Math.round(((tin * Number(p[0]) + tout * Number(p[1])) / 1e6) * 1e6) / 1e6;
+}
 
 function limpiarJSON(txt: string) {
   const ini = txt.indexOf("{");
@@ -101,7 +116,9 @@ async function conAnthropic({ data, mime }: Entrada) {
       throw new Error(ultimoError);
     }
     const texto = (j.content ?? []).filter((c: any) => c.type === "text").map((c: any) => c.text).join("");
-    return limpiarJSON(texto);
+    const tin = j.usage?.input_tokens ?? 0, tout = j.usage?.output_tokens ?? 0;
+    const uso: Uso = { modelo: j.model ?? model, tokens_in: tin, tokens_out: tout, coste_usd: null };
+    return { datos: limpiarJSON(texto), uso };
   }
   throw new Error(ultimoError || "Ningún modelo de Claude disponible");
 }
@@ -130,7 +147,8 @@ async function conGemini({ data, mime }: Entrada) {
       throw new Error(ultimoError);
     }
     const texto = j.candidates?.[0]?.content?.parts?.map((p: any) => p.text ?? "").join("") ?? "";
-    return limpiarJSON(texto);
+    const uso: Uso = { modelo: j.modelVersion ?? model, tokens_in: j.usageMetadata?.promptTokenCount ?? 0, tokens_out: j.usageMetadata?.candidatesTokenCount ?? 0, coste_usd: null };
+    return { datos: limpiarJSON(texto), uso };
   }
   throw new Error(ultimoError || "Ningún modelo de Gemini disponible");
 }
@@ -172,8 +190,15 @@ Deno.serve(async (req) => {
     const fallos: string[] = [];
     for (const proveedor of disponibles) {
       try {
-        const datos = proveedor === "gemini" ? await conGemini({ data, mime }) : await conAnthropic({ data, mime });
-        return resp({ datos, proveedor });
+        const { datos, uso } = proveedor === "gemini" ? await conGemini({ data, mime }) : await conAnthropic({ data, mime });
+        // Registro del gasto (si falla, no impide devolver los datos)
+        try {
+          const { data: aj } = await sb.from("ajustes").select("datos").eq("id", 1).maybeSingle();
+          uso.coste_usd = coste(uso.modelo, uso.tokens_in, uso.tokens_out, aj?.datos?.PRECIOS_IA ?? {});
+          const { error } = await sb.from("lecturas_ia").insert({ proveedor, ...uso });
+          if (error) console.error("registro uso", error.message);
+        } catch (e) { console.error("registro uso", e); }
+        return resp({ datos, proveedor, uso });
       } catch (e) {
         console.error(proveedor, e);
         fallos.push(`${proveedor}: ${(e as Error).message}`);
