@@ -12,6 +12,14 @@ const DEST = {
   get nombre() { return CFG.DESTINO_INFORMES?.nombre || "tramitador"; },
   get telefono() { return CFG.DESTINO_INFORMES?.telefono || ""; },
 };
+// "Conexión": el seguro no encarga el trabajo; el cliente pide presupuesto particular
+// (se le manda a él, con IVA, y lo paga él: no entra en la relación de MULTIBETT)
+const esConexion = (p) => p?.tipo === "conexion";
+const ivaDe = (p) => (esConexion(p) ? Number(CFG.IVA_FACTURA ?? 21) : Number(CFG.IVA || 0));
+const destinoDe = (p) => esConexion(p)
+  ? { nombre: "el cliente", tel: p.telefono || "" }
+  : { nombre: DEST.telefono ? DEST.nombre : "el tramitador", tel: DEST.telefono || p.tramitador_telefono || "" };
+const aQuien = (q) => (q.startsWith("el ") ? "al " + q.slice(3) : "a " + q);
 let ajustesCargados = false;
 async function cargarAjustes() {
   try {
@@ -273,6 +281,8 @@ function pintarLista() {
 const hoyISO = () => new Date().toISOString().slice(0, 10);
 const inicioDia = (d = new Date()) => { const x = new Date(d); x.setHours(0, 0, 0, 0); return x; };
 const FILTROS_EXTRA = {
+  tipo: { t: "Tipo", op: () => [["siniestro", "Encargos del seguro"], ["conexion", "Conexión (presupuesto particular)"]],
+    fn: (p, v) => (v === "conexion" ? esConexion(p) : !esConexion(p)) },
   tecnico: { t: "Técnico", op: () => [["-", "Sin asignar"], ...S.miembros.map((m) => [m.user_id, m.nombre])],
     fn: (p, v) => (v === "-" ? !p.asignado_a : p.asignado_a === v) },
   dias: { t: "Antigüedad", op: () => [["7", "Más de 7 días"], ["15", "Más de 15 días"], ["30", "Más de 30 días"], ["60", "Más de 60 días (atascados)"]],
@@ -480,7 +490,7 @@ async function copiaSeguridad() {
         Aseguradora: p.aseguradora, Expediente: p.expediente, "Nº encargo": p.num_encargo, "Nº siniestro": p.num_siniestro, Póliza: p.poliza,
         Estado: estadoInfo(p.estado).nombre, "En papelera": p.borrado_at ? "Sí" : "", Repetido: p.repetido_de ? "Sí" : "",
         Nombre: p.nombre, Teléfono: p.telefono, "Teléfono 2": p.telefono2, Dirección: p.direccion, CP: p.codigo_postal, Población: p.poblacion,
-        Provincia: p.provincia, Zona: zonaDe(p), Avería: p.averia, Tramitador: p.tramitador_nombre, "Tel. tramitador": p.tramitador_telefono,
+        Provincia: p.provincia, Zona: zonaDe(p), Tipo: esConexion(p) ? "Conexión" : "Seguro", Avería: p.averia, Tramitador: p.tramitador_nombre, "Tel. tramitador": p.tramitador_telefono,
         "Fecha encargo": p.fecha_encargo, Cita: p.fecha_cita ? fFechaHora(p.fecha_cita) : "", Asignado: nombre(p.asignado_a),
         ...(precios ? { "Valorado (€)": p.importe_valorado, "Autorizado (€)": p.importe_autorizado } : {}),
         Entrada: fFechaHora(p.created_at), "Último cambio": fFechaHora(p.updated_at), Días: diasParte(p),
@@ -580,7 +590,7 @@ const nombreMes = (k) => { const [a, m] = k.split("-"); const t = new Date(+a, +
 const sumarDias = (fecha, d) => { const x = new Date(fecha + "T12:00:00"); x.setDate(x.getDate() + d); return x; };
 
 function datosFacturacion() {
-  const term = (S.partes || []).filter((p) => p.estado === "realizado");
+  const term = (S.partes || []).filter((p) => p.estado === "realizado" && !esConexion(p));
   const mesActual = mesDe(new Date().toISOString());
   const sinFacturarAnteriores = term.filter((p) => !p.factura_ref && p.realizado_at && mesDe(p.realizado_at) < mesActual);
   const facturas = new Map();
@@ -727,6 +737,7 @@ function tarjetaParte(p) {
       <span class="aseg">${esc(p.aseguradora)}</span>
       <span class="exp">${esc(p.expediente || "sin nº")}</span>
       ${p.repetido_de ? '<span class="rep-badge" title="Parte repetido con cambios">🔁 Repetido</span>' : ""}
+      ${esConexion(p) ? '<span class="cx-badge" title="Presupuesto particular para el cliente">💬 Conexión</span>' : ""}
       ${chipDias(p)}
       <span class="estado" style="--c:${e.color}">${e.nombre}</span>
     </div>
@@ -1212,6 +1223,7 @@ async function guardarLote() {
     try {
       const f = {};
       for (const k of CAMPOS_PARTE) f[k] = it.datos[k] ? it.datos[k] : null;
+      f.tipo = detectarTipo(it.datos);
       if (f.fecha_encargo && !/^\d{4}-\d{2}-\d{2}$/.test(f.fecha_encargo)) f.fecha_encargo = null;
       const rep = await analizarRepeticion(f).catch(() => null);
       if (rep?.identico) { it.estado = "error"; it.error = "ya existía igual; no se ha guardado"; fallos++; continue; }
@@ -1232,6 +1244,13 @@ async function guardarLote() {
 
 function irANuevo() {
   if (location.hash === "#/nuevo") vistaFormulario(null); else location.hash = "/nuevo";
+}
+
+// Conexión: la IA lo marca si el parte lo dice; en Mapfre, además, el expediente empieza por A (los encargos, por V)
+function detectarTipo(r) {
+  if (/conexi/i.test(r.tipo || "")) return "conexion";
+  if (r.aseguradora === "Mapfre" && /^A[\s-]?\d/i.test((r.expediente || "").trim())) return "conexion";
+  return "siniestro";
 }
 
 function normalizar(d = {}) {
@@ -1263,6 +1282,7 @@ function normalizar(d = {}) {
     if (i >= 0) enTexto.splice(i, 1);
   }
   if (!telOK(r.telefono2) && enTexto.length) r.telefono2 = enTexto.shift();
+  r.tipo = detectarTipo(r);
   return r;
 }
 
@@ -1296,6 +1316,13 @@ async function vistaFormulario(id) {
       <div class="dos">${campo("expediente", "Nº expediente")}${campo("num_encargo", "Nº encargo")}</div>
       <div class="dos">${campo("num_siniestro", "Nº siniestro")}${campo("poliza", "Póliza")}</div>
       ${campo("fecha_encargo", "Fecha de encargo", "date")}
+      <label>Tipo de parte
+        <select name="tipo">
+          <option value="siniestro" ${esConexion(p) ? "" : "selected"}>Encargo del seguro</option>
+          <option value="conexion" ${esConexion(p) ? "selected" : ""}>Conexión · presupuesto particular (con IVA, lo paga el cliente)</option>
+        </select>
+      </label>
+      ${!id && S.borrador?.archivo && esConexion(p) ? '<p class="aviso-campo">💬 Parece un parte de <b>Conexión</b> (presupuesto para el cliente). Cámbialo si no lo es.</p>' : ""}
     </div>
     <div class="tarjeta">
       ${campo("nombre", "Nombre del asegurado", "text", 'autocomplete="off"')}
@@ -1335,6 +1362,11 @@ async function vistaFormulario(id) {
   if (!id && S.borrador?.archivo) S.antesDeSalir = () => confirm("Se perderán los datos leídos de este parte. ¿Salir sin guardar?");
   $("#volver").onclick = $("#cancelar").onclick = () => { if (S.antesDeSalir && !S.antesDeSalir()) return; S.antesDeSalir = null; history.back(); };
   if (!id && (S.borrador?.archivo || S.fotosPendientes?.length)) avisoRepetido(p);
+  // Mapfre con expediente que empieza por A → Conexión
+  $$("#fParte [name=expediente], #fParte [name=aseguradora]").forEach((el) => el.addEventListener("change", () => {
+    const f = Object.fromEntries(new FormData($("#fParte")));
+    if (detectarTipo({ ...f, tipo: "" }) === "conexion" && f.tipo !== "conexion") { $("#fParte [name=tipo]").value = "conexion"; toast("Marcado como Conexión (Mapfre, expediente con A)"); }
+  }));
   if (!id) {
     let tRep;
     $$("#fParte [name=expediente], #fParte [name=num_encargo], #fParte [name=num_siniestro], #fParte [name=aseguradora]").forEach((el) =>
@@ -1417,6 +1449,7 @@ async function vistaParte(id) {
     <button class="icono" id="menuParte" aria-label="Más opciones">${I.more}</button>
   </header>
 
+  ${esConexion(p) ? `<div class="aviso cx-info">💬 <b>Conexión · presupuesto particular.</b> No es un encargo del seguro: el presupuesto se manda al cliente, con IVA (${ivaDe(p)} %), y lo paga él. No entra en la relación de ${esc(DEST.nombre)}.</div>` : ""}
   ${p.repetido_de ? `<div class="aviso repetido-info">🔁 <b>Parte repetido</b>${p.cambios_repetido ? ` · Cambios: ${esc(p.cambios_repetido)}` : ""}
     <br>${original ? `<a href="#/parte/${original.id}">Ver el parte anterior (${esc(original.estado ? estadoInfo(original.estado).nombre : "")}, ${fFecha(original.created_at)})</a>` : "El parte anterior ya no está en la lista (puede estar en la papelera)."}</div>` : ""}
   ${repetidos.length ? `<div class="aviso repetido-info">🔁 Este parte tiene ${repetidos.length === 1 ? "un repetido posterior" : repetidos.length + " repetidos posteriores"}: ${repetidos.map((x) => `<a href="#/parte/${x.id}">${fFecha(x.created_at)}${x.num_encargo ? " · enc. " + esc(x.num_encargo) : ""}</a>`).join(" · ")}</div>` : ""}
@@ -1442,13 +1475,13 @@ async function vistaParte(id) {
     <div class="estado-actual" style="--c:${e.color}">${chipDias(p, true)} · Estado: <b>${e.nombre}</b>${p.fecha_cita && idx < 2 ? ` · Cita ${fFechaHora(p.fecha_cita)}` : ""}</div>
     <div class="lista-botones">
       ${sig ? `<button class="btn primario ancho" id="avanzar" style="--c:${sig.color}">Marcar como ${sig.nombre.toLowerCase()} →</button>` : ""}
-      ${idx >= idxEstado("visitado") ? `<button class="btn primario ancho" id="informe" style="--c:#16a34a">${I.wa} Enviar ${p.estado === "realizado" ? "trabajo terminado" : "visita"} a ${esc(DEST.nombre)}</button>` : ""}
+      ${idx >= idxEstado("visitado") ? `<button class="btn primario ancho" id="informe" style="--c:#16a34a">${I.wa} ${esConexion(p) ? `Enviar ${p.estado === "realizado" ? "trabajo terminado" : "presupuesto"} al cliente` : `Enviar ${p.estado === "realizado" ? "trabajo terminado" : "visita"} a ${esc(DEST.nombre)}`}</button>` : ""}
       <button class="btn ancho" id="nota">Añadir nota</button>
     </div>
   </section>
 
   <section class="tarjeta">
-    <h3>Avería / daño</h3>
+    <h3>${esConexion(p) ? "Trabajo solicitado" : "Avería / daño"}</h3>
     <p class="pre">${esc(p.averia || "—")}</p>
   </section>
   ${idx >= idxEstado("visitado") || (p.lineas_valoracion || []).length ? seccionLineas(p, "valoracion") : ""}
@@ -1520,19 +1553,19 @@ async function vistaParte(id) {
   pintarFotos(p);
 }
 
-const htmlTotales = (t) => CFG.IVA
-  ? `<span>Base imponible</span><b>${fEuros(t.base)}</b><span>IVA ${CFG.IVA}%</span><b>${fEuros(t.iva)}</b><span>Total</span><b class="grande">${fEuros(t.total)}</b>`
+const htmlTotales = (t, iva = CFG.IVA) => iva
+  ? `<span>Base imponible</span><b>${fEuros(t.base)}</b><span>IVA ${iva}%</span><b>${fEuros(t.iva)}</b><span>Total</span><b class="grande">${fEuros(t.total)}</b>`
   : `<span>Total (sin IVA)</span><b class="grande">${fEuros(t.base)}</b>`;
 
 function seccionLineas(p, tipo) {
   const lineas = (tipo === "realizados" ? p.lineas_realizadas : p.lineas_valoracion) || [];
-  const t = totalesLineas(lineas, CFG.IVA);
+  const t = totalesLineas(lineas, ivaDe(p));
   return `<section class="tarjeta">
-    <div class="h3-fila"><h3>${tipo === "realizados" ? "Trabajos realizados" : "Valoración"}</h3>
+    <div class="h3-fila"><h3>${tipo === "realizados" ? "Trabajos realizados" : (esConexion(p) ? "Presupuesto" : "Valoración")}</h3>
       <a class="btn peq" href="#/lineas/${p.id}/${tipo}">${lineas.length ? "Editar" : "+ Códigos"}</a></div>
     ${lineas.length ? `<div class="lineas-mini">${lineas.map((l) => `
       <div><span><b>${esc(l.codigo || "—")}</b> ${esc(l.descripcion)}</span><span>${Number(l.cantidad)}×<span class="precio"> · ${fEuros(importeLinea(l))}${Number(l.dto) ? ` <small>(-${Number(l.dto)}%)</small>` : ""}</span></span></div>`).join("")}</div>
-      <div class="totales precio">${htmlTotales(t)}</div>`
+      <div class="totales precio">${htmlTotales(t, ivaDe(p))}</div>`
       : `<p class="suave">${tipo === "realizados" ? "Sin trabajos anotados. Al editarlos se copian los de la valoración para que solo cambies lo que haya variado." : "Sin códigos. Busca por código o por descripción."}</p>`}
   </section>`;
 }
@@ -1796,28 +1829,34 @@ function textoInforme(p, conPrecios) {
   const notas = ev.filter((e) => e.nota && ["visitado", "valorado", "realizado", null].includes(e.estado ?? null) && !/^(Parte recibido de nuevo|Ha llegado otro parte|Preparado mensaje)/.test(e.nota))
     .slice(-3).map((e) => "- " + e.nota.trim());
   const L = [];
+  const cx = esConexion(p);
+  if (cx) {
+    L.push(`*${final ? "TRABAJO TERMINADO" : "PRESUPUESTO"}*`);
+    L.push(`Cliente: ${p.nombre || "—"}`);
+  } else {
   L.push(`*${final ? "TRABAJO TERMINADO" : "VISITA REALIZADA"}*`);
   L.push(`${p.aseguradora || ""} · Exp. ${p.expediente || "—"}${p.num_encargo ? " · Encargo " + p.num_encargo : ""}${p.num_siniestro ? " · Siniestro " + p.num_siniestro : ""}`);
   L.push(`Cliente: ${p.nombre || "—"}${p.telefono ? " · Tel. " + p.telefono : ""}`);
+  }
   const dir = [p.direccion, p.codigo_postal, p.poblacion].filter(Boolean).join(", ");
   if (dir) L.push(`Dirección: ${dir}`);
-  if (p.averia) L.push(`Avería: ${p.averia}`);
+  if (p.averia) L.push(`${cx ? "Trabajo" : "Avería"}: ${p.averia}`);
   const fv = fechaDe("visitado"), fr = fechaDe("realizado");
   if (fv) L.push(`Visita: ${fFecha(fv)}`);
   if (final && fr) L.push(`Terminado: ${fFecha(fr)}`);
-  if (notas.length) { L.push(""); L.push("*Observaciones:*"); L.push(...notas); }
+  if (notas.length && !cx) { L.push(""); L.push("*Observaciones:*"); L.push(...notas); }
   if (lineas.length) {
-    L.push(""); L.push(`*${final && (p.lineas_realizadas || []).length ? "Trabajos realizados" : "Valoración"}:*`);
+    L.push(""); L.push(`*${final && (p.lineas_realizadas || []).length ? "Trabajos realizados" : (cx ? "Presupuesto" : "Valoración")}:*`);
     for (const l of lineas) {
       const cant = Number(l.cantidad || 1).toLocaleString("es-ES");
       L.push(`- ${l.codigo ? l.codigo + " " : ""}${l.descripcion || ""} × ${cant}${conPrecios ? " = " + fEuros(importeLinea(l)) : ""}`);
     }
     if (conPrecios) {
-      const iva = CFG.IVA || 0, t = totalesLineas(lineas, iva);
+      const iva = ivaDe(p), t = totalesLineas(lineas, iva);
       L.push(iva ? `*TOTAL: ${fEuros(t.total)}* (IVA ${iva}% incl.)` : `*TOTAL (sin IVA): ${fEuros(t.base)}*`);
     }
   } else if (conPrecios && p.importe_valorado != null) {
-    L.push(""); L.push(`*Valoración: ${fEuros(p.importe_valorado)}*`);
+    L.push(""); L.push(cx && ivaDe(p) ? `*Presupuesto: ${fEuros(p.importe_valorado * (1 + ivaDe(p) / 100))}* (IVA ${ivaDe(p)}% incl.)` : `*Valoración: ${fEuros(p.importe_valorado)}*`);
   }
   L.push(""); L.push(CFG.EMPRESA?.nombre || "");
   return L.join("\n").trim();
@@ -1838,11 +1877,12 @@ async function flujoInforme(pIn) {
   try { p = await conCarga("Preparando…", () => api.obtenerParte(pIn.id)); } catch { return; }
   const fotos = fotosParaEnvio(p);
   const hayLineas = (p.lineas_valoracion || []).length || (p.lineas_realizadas || []).length || p.importe_valorado != null;
-  let precios = verPrecios() && sessionGet("precios") !== "0";
-  const tipoInf = p.estado === "realizado" ? "trabajo terminado" : "visita";
+  let precios = verPrecios() && (esConexion(p) || sessionGet("precios") !== "0");
+  const tipoInf = p.estado === "realizado" ? "trabajo terminado" : (esConexion(p) ? "presupuesto" : "visita");
   const s = abrirSheet(`
-    <h2>Enviar ${tipoInf} a ${esc(DEST.nombre)}</h2>
-    ${hayLineas && verPrecios() ? `<label class="check"><input type="checkbox" id="conPrecios" ${precios ? "checked" : ""}> Incluir precios en la valoración</label>
+    <h2>Enviar ${tipoInf} ${esc(aQuien(destinoDe(p).nombre))}</h2>
+    ${esConexion(p) && !p.telefono ? '<p class="aviso-campo">⚠️ Este parte no tiene teléfono del cliente.</p>' : ""}
+    ${hayLineas && verPrecios() ? `<label class="check"><input type="checkbox" id="conPrecios" ${precios ? "checked" : ""}> Incluir precios en ${esConexion(p) ? "el presupuesto" : "la valoración"}</label>
     <p class="suave" id="txtPrecios">${precios ? "Códigos, cantidades, precios y total." : "Solo códigos, descripción y cantidades (sin precios ni total)."}</p>` : ""}
     <div class="lista-botones">
       <button class="btn primario grande" id="envPDF" style="--c:#16a34a">${I.pdf}<span><b>PDF</b><small>Informe completo en un archivo PDF</small></span></button>
@@ -1850,7 +1890,7 @@ async function flujoInforme(pIn) {
       <button class="btn texto ancho" data-cerrar>Cerrar</button>
     </div>`);
   $("#conPrecios", s)?.addEventListener("change", (e) => {
-    precios = e.target.checked; sessionSet("precios", precios ? "1" : "0");
+    precios = e.target.checked; if (!esConexion(p)) sessionSet("precios", precios ? "1" : "0");
     $("#txtPrecios", s).textContent = precios ? "Códigos, cantidades, precios y total." : "Solo códigos, descripción y cantidades (sin precios ni total).";
   });
   $("#envPDF", s).onclick = () => enviarPDF(p, precios);
@@ -1873,16 +1913,15 @@ async function enviarMensaje(p, precios, fotosSel) {
       });
     } catch { files = []; }
   }
-  const tel = DEST.telefono || p.tramitador_telefono;
-  const quien = DEST.telefono ? DEST.nombre : "el tramitador";
+  const { tel, nombre: quien } = destinoDe(p);
   const puedeFotos = files.length && navigator.canShare && navigator.canShare({ files });
   cerrarSheet();
   const s = abrirSheet(`
     <h2>Mensaje para ${esc(quien)}</h2>
     <textarea id="txtMsg" rows="10">${esc(texto)}</textarea>
     <div class="lista-botones">
-      ${puedeFotos ? `<button class="btn primario grande" id="msgFotos" style="--c:#16a34a">${I.wa}<span><b>Enviar texto + ${files.length} foto${files.length > 1 ? "s" : ""}</b><small>Elige WhatsApp y luego a ${esc(quien)}</small></span></button>` : ""}
-      ${tel ? `<button class="btn grande" id="msgSolo">${I.wa}<span><b>${puedeFotos ? "Solo el texto" : "Enviar por WhatsApp"}</b><small>Abre el chat de ${esc(quien)} con el mensaje escrito</small></span></button>` : ""}
+      ${puedeFotos ? `<button class="btn primario grande" id="msgFotos" style="--c:#16a34a">${I.wa}<span><b>Enviar texto + ${files.length} foto${files.length > 1 ? "s" : ""}</b><small>Elige WhatsApp y luego ${esc(aQuien(quien))}</small></span></button>` : ""}
+      ${tel ? `<button class="btn grande" id="msgSolo">${I.wa}<span><b>${puedeFotos ? "Solo el texto" : "Enviar por WhatsApp"}</b><small>Abre el chat ${esc(quien.startsWith("el ") ? "del " + quien.slice(3) : "de " + quien)} con el mensaje escrito</small></span></button>` : ""}
       <button class="btn grande" id="msgCopiar">📋<span><b>Copiar texto</b><small>Para pegarlo donde quieras</small></span></button>
       <button class="btn texto ancho" data-cerrar>Cerrar</button>
     </div>
@@ -1905,7 +1944,7 @@ async function enviarPDF(pIn, precios) {
     ({ blob, nombre, p } = await conCarga("Generando PDF…", async () => {
       const p = await api.obtenerParte(pIn.id);
       const { generarInforme } = await cargarPDF();
-      const r = await generarInforme(p, api, S.miembros, { precios });
+      const r = await generarInforme(p, api, S.miembros, { precios, iva: ivaDe(p) });
       const path = await api.subirArchivo(`${p.id}/${r.nombre}`, r.blob, "application/pdf");
       await api.actualizarParte(p.id, { informe_path: path });
       if (api.modo === "supabase") { try { enlace = await api.urlArchivo(path, 60 * 60 * 24 * 30); } catch { /* sin enlace */ } }
@@ -1916,19 +1955,20 @@ async function enviarPDF(pIn, precios) {
   const file = new File([blob], nombre, { type: "application/pdf" });
   const puedeCompartir = !!(navigator.canShare && navigator.canShare({ files: [file] }));
   const tipoInf = p.estado === "realizado" ? "Trabajo terminado" : "Visita realizada";
-  const texto = `${tipoInf} - ${p.aseguradora} exp. ${p.expediente || ""}${p.num_encargo ? " (encargo " + p.num_encargo + ")" : ""} - ${p.nombre || ""}.`;
-  const tel = DEST.telefono || p.tramitador_telefono;
-  const quien = DEST.telefono ? DEST.nombre : "el tramitador";
+  const texto = esConexion(p)
+    ? `Hola${p.nombre ? " " + p.nombre.split(/\s+/)[0] : ""}, le enviamos ${p.estado === "realizado" ? "el resumen del trabajo realizado" : "el presupuesto que nos pidió"}. Cualquier duda nos dice. ${CFG.EMPRESA?.nombre || ""}`
+    : `${tipoInf} - ${p.aseguradora} exp. ${p.expediente || ""}${p.num_encargo ? " (encargo " + p.num_encargo + ")" : ""} - ${p.nombre || ""}.`;
+  const { tel, nombre: quien } = destinoDe(p);
   const s = abrirSheet(`
     <h2>PDF listo</h2>
     <p class="suave">${esc(nombre)}${precios ? "" : " · sin precios"}</p>
     <div class="lista-botones">
-      ${puedeCompartir ? `<button class="btn primario grande" id="compartir" style="--c:#16a34a">${I.wa}<span><b>Enviar PDF por WhatsApp</b><small>Elige WhatsApp y luego a ${esc(quien)}</small></span></button>` : ""}
-      ${tel ? `<a class="btn grande" id="waEnlace" target="_blank" rel="noopener" href="${linkWhatsApp(tel, texto + (enlace ? "\n" + enlace : ""))}">${I.wa}<span><b>WhatsApp directo a ${esc(quien)}</b><small>${enlace ? "Mensaje con enlace al PDF (válido 30 días)" : "Abre el chat; adjunta el PDF descargado"}</small></span></a>` : ""}
+      ${puedeCompartir ? `<button class="btn primario grande" id="compartir" style="--c:#16a34a">${I.wa}<span><b>Enviar PDF por WhatsApp</b><small>Elige WhatsApp y luego ${esc(aQuien(quien))}</small></span></button>` : ""}
+      ${tel ? `<a class="btn grande" id="waEnlace" target="_blank" rel="noopener" href="${linkWhatsApp(tel, texto + (enlace ? "\n" + enlace : ""))}">${I.wa}<span><b>WhatsApp directo ${esc(aQuien(quien))}</b><small>${enlace ? "Mensaje con enlace al PDF (válido 30 días)" : "Abre el chat; adjunta el PDF descargado"}</small></span></a>` : ""}
       <button class="btn grande" id="descargar">${I.pdf}<span><b>Descargar / ver PDF</b></span></button>
       <button class="btn texto ancho" data-cerrar>Cerrar</button>
     </div>
-    ${!tel ? '<p class="suave">Consejo: añade el teléfono del tramitador en "Editar datos" para abrir su chat directamente.</p>' : ""}`);
+    ${!tel ? `<p class="suave">Consejo: añade el teléfono ${esConexion(p) ? "del cliente" : "del tramitador"} en "Editar datos" para abrir su chat directamente.</p>` : ""}`);
   $("#compartir", s)?.addEventListener("click", async () => {
     try { await navigator.share({ files: [file], title: nombre, text: texto }); }
     catch (e) { if (e.name !== "AbortError") toast("No se pudo compartir: " + e.message, "error"); }
@@ -1974,8 +2014,8 @@ async function vistaLineas(id, tipo) {
   <div style="height:60px"></div>`;
 
   const pintarTotales = () => {
-    const t = totalesLineas(lineas, CFG.IVA);
-    $("#totales").innerHTML = htmlTotales(t);
+    const t = totalesLineas(lineas, ivaDe(p));
+    $("#totales").innerHTML = htmlTotales(t, ivaDe(p));
   };
   const pintarLineas = () => {
     const c = $("#lineas");

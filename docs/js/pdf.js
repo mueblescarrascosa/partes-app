@@ -3,6 +3,9 @@ import { ESTADOS, fFecha, fFechaHora, fEuros, blobADataURL, medirImagen, importe
 
 export async function generarInforme(parte, api, miembros = [], opc = {}) {
   const conPrecios = opc.precios !== false;
+  // Conexión = presupuesto para un particular (se manda al cliente, con IVA)
+  const cx = parte.tipo === "conexion";
+  const ivaPct = opc.iva != null ? opc.iva : (window.APP_CONFIG.IVA || 0);
   const { jsPDF } = window.jspdf;
   const E = window.APP_CONFIG.EMPRESA;
   const doc = new jsPDF({ unit: "mm", format: "a4" });
@@ -25,7 +28,7 @@ export async function generarInforme(parte, api, miembros = [], opc = {}) {
   if (E.direccion) doc.text(E.direccion, M, 24);
   doc.setFont("helvetica", "bold"); doc.setFontSize(10);
   const esFinal = parte.estado === "realizado";
-  doc.text(esFinal ? "INFORME DE TRABAJO REALIZADO" : "INFORME DE VISITA", W - M, 13, { align: "right" });
+  doc.text(cx ? (esFinal ? "TRABAJO REALIZADO" : "PRESUPUESTO") : (esFinal ? "INFORME DE TRABAJO REALIZADO" : "INFORME DE VISITA"), W - M, 13, { align: "right" });
   doc.setFont("helvetica", "normal"); doc.setFontSize(8.5);
   doc.text(`Fecha: ${fFecha(new Date())}`, W - M, 19, { align: "right" });
   doc.setTextColor(20);
@@ -55,6 +58,7 @@ export async function generarInforme(parte, api, miembros = [], opc = {}) {
     y += 1.5;
   };
 
+  if (!cx) {
   titulo("Datos del encargo");
   fila("Aseguradora", parte.aseguradora);
   fila("Nº expediente", parte.expediente);
@@ -64,14 +68,15 @@ export async function generarInforme(parte, api, miembros = [], opc = {}) {
   fila("Fecha encargo", fFecha(parte.fecha_encargo));
   fila("Tramitador", [parte.tramitador_nombre, parte.tramitador_telefono, parte.tramitador_email].filter(Boolean).join(" · "));
   y += 3;
+  }
 
-  titulo("Asegurado");
+  titulo(cx ? "Cliente" : "Asegurado");
   fila("Nombre", parte.nombre);
   fila("Dirección", [parte.direccion, [parte.codigo_postal, parte.poblacion].filter(Boolean).join(" "), parte.provincia].filter(Boolean).join(", "));
   fila("Teléfono", [parte.telefono, parte.telefono2].filter(Boolean).join(" / "));
   y += 3;
 
-  titulo("Daño / avería");
+  titulo(cx ? "Trabajo solicitado" : "Daño / avería");
   parrafo(parte.averia || "—");
   y += 2;
 
@@ -79,7 +84,7 @@ export async function generarInforme(parte, api, miembros = [], opc = {}) {
   const lineasFinal = (parte.lineas_realizadas || []).length ? parte.lineas_realizadas : parte.lineas_valoracion || [];
   const lineas = esFinal ? lineasFinal : parte.lineas_valoracion || [];
   if (lineas.length) {
-    titulo(esFinal && (parte.lineas_realizadas || []).length ? "Trabajos realizados" : "Valoración", 20);
+    titulo(esFinal && (parte.lineas_realizadas || []).length ? "Trabajos realizados" : (cx ? "Presupuesto" : "Valoración"), 20);
     const cols = conPrecios ? [
       { t: "Código", w: 16, a: "left" }, { t: "Descripción", w: 88, a: "left" }, { t: "Cant.", w: 14, a: "right" },
       { t: "Precio", w: 22, a: "right" }, { t: "Dto", w: 14, a: "right" }, { t: "Importe", w: 26, a: "right" },
@@ -111,7 +116,7 @@ export async function generarInforme(parte, api, miembros = [], opc = {}) {
       y += h;
       doc.setDrawColor(226, 232, 240); doc.line(M, y - 3, M + AN, y - 3);
     }
-    const iva = window.APP_CONFIG.IVA || 0;
+    const iva = ivaPct;
     const t = totalesLineas(lineas, iva);
     salto(20); y += 2;
     if (conPrecios) {
@@ -132,9 +137,10 @@ export async function generarInforme(parte, api, miembros = [], opc = {}) {
     y += 3;
   }
 
-  // ---- Fases
-  titulo("Seguimiento");
+  // ---- Fases (en un presupuesto para el cliente no se ponen el seguimiento ni las notas internas)
   const ev = parte.eventos ?? [];
+  if (!cx) {
+  titulo("Seguimiento");
   for (const e of ESTADOS) {
     const ult = [...ev].reverse().find((x) => x.estado === e.id);
     salto(6);
@@ -160,6 +166,7 @@ export async function generarInforme(parte, api, miembros = [], opc = {}) {
       doc.text(`${fFechaHora(n.created_at)} · ${etiqueta}`, M, y); y += 4.2;
       doc.setTextColor(20); parrafo(n.nota);
     }
+  }
   }
 
   // ---- Fotos
@@ -211,11 +218,11 @@ export async function generarInforme(parte, api, miembros = [], opc = {}) {
   const n = doc.getNumberOfPages();
   for (let i = 1; i <= n; i++) {
     doc.setPage(i); doc.setFontSize(7.5); doc.setTextColor(148, 163, 184);
-    doc.text(`${parte.aseguradora ?? ""} · Exp. ${parte.expediente ?? "-"}`, M, ALTO - 8);
+    doc.text(cx ? `${E.nombre ?? ""} · Presupuesto ${parte.expediente ?? ""}` : `${parte.aseguradora ?? ""} · Exp. ${parte.expediente ?? "-"}`, M, ALTO - 8);
     doc.text(`Página ${i} de ${n}`, W - M, ALTO - 8, { align: "right" });
   }
 
-  const nombreArchivo = `${esFinal ? "Terminado" : "Visita"}_${(parte.aseguradora || "parte").replace(/\s+/g, "")}_${(parte.expediente || parte.id.slice(0, 8)).replace(/[^\w-]/g, "")}.pdf`;
+  const nombreArchivo = `${esFinal ? "Terminado" : (cx ? "Presupuesto" : "Visita")}_${(parte.aseguradora || "parte").replace(/\s+/g, "")}_${(parte.expediente || parte.id.slice(0, 8)).replace(/[^\w-]/g, "")}.pdf`;
   return { blob: doc.output("blob"), nombre: nombreArchivo };
 }
 
