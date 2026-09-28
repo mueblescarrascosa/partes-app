@@ -6,7 +6,7 @@
 // ============================================================
 window.APP_CONFIG = {
   // Versión de la app y autor (se muestra en el pie de la app)
-  VERSION: "2.3.0",
+  VERSION: "2.3.1",
   FECHA_VERSION: "28/09/2026",
   AUTOR: "Alfonso Carrascosa Martínez",
   IDEA: "José Carlos Carrascosa Martínez",

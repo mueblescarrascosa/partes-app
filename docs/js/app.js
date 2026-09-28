@@ -1271,6 +1271,7 @@ async function guardarLote() {
       const f = {};
       for (const k of CAMPOS_PARTE) f[k] = it.datos[k] ? it.datos[k] : null;
       f.tipo = detectarTipo(it.datos);
+      aMayus(f);
       if (f.fecha_encargo && !/^\d{4}-\d{2}-\d{2}$/.test(f.fecha_encargo)) f.fecha_encargo = null;
       const rep = await analizarRepeticion(f).catch(() => null);
       if (rep?.identico) { it.estado = "error"; it.error = "ya existía igual; no se ha guardado"; fallos++; continue; }
@@ -1299,6 +1300,23 @@ function detectarTipo(r) {
   if (r.aseguradora === "Mapfre" && /^A[\s-]?\d/i.test((r.expediente || "").trim())) return "conexion";
   return "siniestro";
 }
+
+// Campos que se guardan siempre en MAYÚSCULAS (la base de datos también lo fuerza)
+const CAMPOS_MAYUS = ["expediente", "num_encargo", "num_siniestro", "poliza", "codigo_postal", "averia"];
+const CAMPOS_TITULO = ["nombre", "direccion", "poblacion", "provincia", "tramitador_nombre"];
+const PARTICULAS = new Set(["de", "del", "la", "las", "los", "el", "y", "e"]);
+// "MARIA DEL MAR VILCHEZ" → "Maria del Mar Vilchez"; "CL ADARVES BAJOS 37 3a" → "Cl Adarves Bajos 37 3A"
+const tipoTitulo = (t) => String(t).trim().split(/\s+/).map((w, i) => {
+  if (/\d/.test(w)) return w.toLocaleUpperCase("es-ES");
+  const l = w.toLocaleLowerCase("es-ES");
+  if (i > 0 && PARTICULAS.has(l)) return l;
+  return l.replace(/(^|[^a-záéíóúüñç0-9])([a-záéíóúüñç])/g, (m, a, b) => a + b.toLocaleUpperCase("es-ES"));
+}).join(" ");
+const aMayus = (o) => {
+  for (const k of CAMPOS_MAYUS) if (typeof o[k] === "string") o[k] = o[k].toLocaleUpperCase("es-ES");
+  for (const k of CAMPOS_TITULO) if (typeof o[k] === "string" && o[k].trim()) o[k] = tipoTitulo(o[k]);
+  return o;
+};
 
 function normalizar(d = {}) {
   const r = {};
@@ -1331,7 +1349,7 @@ function normalizar(d = {}) {
   }
   if (!telOK(r.telefono2) && enTexto.length) r.telefono2 = enTexto.shift();
   r.tipo = detectarTipo(r);
-  return r;
+  return aMayus(r);
 }
 
 // ------------------------------------------------------------------ Formulario (nuevo / editar)
@@ -1423,7 +1441,7 @@ async function vistaFormulario(id) {
   }
   $("#fParte").addEventListener("submit", async (e) => {
     e.preventDefault();
-    const f = Object.fromEntries(new FormData(e.target));
+    const f = aMayus(Object.fromEntries(new FormData(e.target)));
     for (const k in f) if (f[k] === "") f[k] = null;
     if (f.fecha_cita) f.fecha_cita = new Date(f.fecha_cita).toISOString();
     for (const k of ["importe_valorado", "importe_autorizado"]) if (f[k] != null) f[k] = Number(String(f[k]).replace(",", "."));
