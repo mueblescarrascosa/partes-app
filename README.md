@@ -65,3 +65,4 @@ Guardas datos personales de asegurados. Ten en cuenta el RGPD: usa contraseñas 
 
 © 2026 Alfonso Carrascosa Martínez. Todos los derechos reservados.
 Idea original: José Carlos Carrascosa Martínez.
+Desarrollada con ayuda de Claude (Anthropic).
