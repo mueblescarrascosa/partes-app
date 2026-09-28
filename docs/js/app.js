@@ -90,7 +90,7 @@ async function conCarga(texto, fn) {
 }
 
 // ------------------------------------------------------------------ Copyright y versión
-const pieCopyright = () => `<footer class="copyright">© ${new Date().getFullYear()} ${esc(CFG.AUTOR || "Alfonso Carrascosa Martínez")} · Todos los derechos reservados<br>${CFG.IDEA ? "Idea original: " + esc(CFG.IDEA) + "<br>" : ""}Partes · versión ${esc(CFG.VERSION || "")}${CFG.FECHA_VERSION ? " (" + esc(CFG.FECHA_VERSION) + ")" : ""}</footer>`;
+const pieCopyright = () => `<footer class="copyright">© ${new Date().getFullYear()} ${esc(CFG.AUTOR || "Alfonso Carrascosa Martínez")} · Todos los derechos reservados<br>${CFG.IDEA ? "Idea original: " + esc(CFG.IDEA) + "<br>" : ""}${CFG.HECHA_CON ? esc(CFG.HECHA_CON) + "<br>" : ""}Partes · versión ${esc(CFG.VERSION || "")}${CFG.FECHA_VERSION ? " (" + esc(CFG.FECHA_VERSION) + ")" : ""}</footer>`;
 
 // ------------------------------------------------------------------ Router
 window.addEventListener("hashchange", router);
