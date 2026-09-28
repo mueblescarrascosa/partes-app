@@ -342,3 +342,27 @@ h4.cat { margin: 14px 4px 2px; font-size: 12px; text-transform: uppercase; color
 .fact-desglose b.grande { font-size: 18px; }
 
 .copyright { text-align: center; font-size: 11.5px; line-height: 1.5; color: var(--suave, #64748b); opacity: .85; padding: 14px 12px 6px; }
+
+/* ---------- Ordenador: aprovechar la pantalla ---------- */
+@media (min-width: 1000px) {
+  #app { max-width: 1000px; }
+  body[data-vista="lista"] #app, body[data-vista="papelera"] #app { max-width: min(1600px, calc(100vw - 48px)); }
+  .barra { border-radius: 0 0 14px 14px; }
+  .chips { flex-wrap: wrap; overflow: visible; }
+  .filtros select { flex: 0 1 260px; }
+  .lista { grid-template-columns: repeat(auto-fill, minmax(440px, 1fr)); gap: 12px; }
+  .lista > .vacio { grid-column: 1 / -1; }
+  .parte { display: flex; flex-direction: column; height: 100%; }
+  .parte-pie { margin-top: auto; padding-top: 8px; }
+  .parte:hover { box-shadow: 0 4px 14px rgba(0,0,0,.18); }
+  .parte:active { transform: none; }
+  .fab { right: max(24px, calc(50vw - min(800px, 50vw - 24px) + 24px)); }
+  .lote-pie { max-width: 1000px; }
+  /* Hojas: ventana centrada en lugar de subir desde abajo */
+  .sheet-fondo { align-items: center; }
+  .sheet { border-radius: 20px; max-height: 88vh; }
+  .sheet-asa { display: none; }
+}
+@media (min-width: 1500px) {
+  .lista { grid-template-columns: repeat(auto-fill, minmax(460px, 1fr)); }
+}
