@@ -819,8 +819,21 @@ function menuNuevo() {
 
 // Lee con IA; si la foto está girada, la endereza y la vuelve a leer (las tablas giradas se leen mal).
 // Devuelve { datos, lectura, giro } — giro = grados aplicados (para girar también la foto que se guarda).
+// Llamada a la IA con reintentos si falla la conexión (cobertura, servidor actualizándose…)
+async function extraerConReintento(b64, mime, aviso = () => {}) {
+  for (let intento = 1; ; intento++) {
+    try { return await api.extraer(b64, mime); }
+    catch (e) {
+      const red = /fetch|network|conexi|timeout|503|502|504/i.test(String(e?.message || e));
+      if (!red || intento >= 3) throw e;
+      aviso(`Sin conexión con el servidor, reintentando (${intento}/2)…`);
+      await new Promise((r) => setTimeout(r, 3000 * intento));
+    }
+  }
+}
+
 async function leerConIA(lectura, mime, aviso = () => {}) {
-  let datos = await api.extraer(await blobABase64(lectura), mime);
+  let datos = await extraerConReintento(await blobABase64(lectura), mime, aviso);
   if (mime === "application/pdf") return { datos, lectura, giro: 0 };
   let giro = 0;
   for (let i = 0; i < 2; i++) {
@@ -829,7 +842,7 @@ async function leerConIA(lectura, mime, aviso = () => {}) {
     aviso("La foto está girada: enderezando y leyendo otra vez…");
     lectura = await girarImagen(lectura, g);
     giro = (giro + g) % 360;
-    datos = await api.extraer(await blobABase64(lectura), mime);
+    datos = await extraerConReintento(await blobABase64(lectura), mime, aviso);
   }
   return { datos, lectura, giro };
 }
@@ -1208,12 +1221,14 @@ function pintarLote() {
       <label class="lote-check">${it.estado === "ok" ? `<input type="checkbox" ${it.sel ? "checked" : ""}>` : it.estado === "guardado" ? "✅" : ""}</label>
       <div class="lote-info">${cab}${(it.avisos || []).map((a) => `<em class="${a.grave ? "grave" : ""}">${esc(a.t)}</em>`).join("")}</div>
       ${it.estado === "ok" ? `<button class="btn peq" data-editar>Corregir</button>` : ""}
+      ${it.estado === "error" && it.file ? `<button class="btn peq" data-reintentar>Reintentar</button>` : ""}
     </div>`;
   }).join("");
   $$(".lote-item", cont).forEach((el) => {
     const it = S.lote[el.dataset.i];
     el.querySelector("input[type=checkbox]")?.addEventListener("change", (e) => { it.sel = e.target.checked; it.tocado = true; pintarLote(); });
     el.querySelector("[data-editar]")?.addEventListener("click", () => editarItemLote(it));
+    el.querySelector("[data-reintentar]")?.addEventListener("click", () => { it.estado = "pendiente"; it.error = null; it.sel = true; pintarLote(); procesarLote(); });
   });
 }
 
