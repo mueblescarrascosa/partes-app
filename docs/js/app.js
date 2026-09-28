@@ -621,9 +621,10 @@ async function cargarXLSX() {
 const DIAS_COBRO = () => Number(CFG.DIAS_COBRO ?? 60);
 const IVA_FACT = () => Number(CFG.IVA_FACTURA ?? 21);
 const conIVA = (base) => { const iva = Math.round(base * IVA_FACT()) / 100; return { base, iva, total: Math.round((base + iva) * 100) / 100 }; };
+// Lo que se factura: siempre el importe autorizado si lo hay; si no, lo realizado; si no, lo valorado
 function importeParte(p) {
-  if ((p.lineas_realizadas || []).length) return totalesLineas(p.lineas_realizadas, 0).base;
   if (p.importe_autorizado != null) return Number(p.importe_autorizado);
+  if ((p.lineas_realizadas || []).length) return totalesLineas(p.lineas_realizadas, 0).base;
   if ((p.lineas_valoracion || []).length) return totalesLineas(p.lineas_valoracion, 0).base;
   if (p.importe_valorado != null) return Number(p.importe_valorado);
   return null;
@@ -708,7 +709,14 @@ async function vistaFacturacion() {
     $("#fMes").onchange = (e) => { mes = e.target.value; sessionSet("factMes", mes); sel.clear(); pinta(); };
     $$("#fact .fact-fila input").forEach((c) => c.onchange = () => { c.checked ? sel.add(c.dataset.id) : sel.delete(c.dataset.id); pinta(); });
     const lineasDe = (p) => ((p.lineas_realizadas || []).length ? p.lineas_realizadas : (p.lineas_valoracion || []));
-    const filasExp = () => elegidos.map((p) => ({ ...p, importe: importeParte(p) || 0, lineas: lineasDe(p),
+    // Si los códigos no suman lo autorizado, se añade un renglón de ajuste para que la relación cuadre
+    const lineasCuadradas = (p) => {
+      const ls = lineasDe(p);
+      if (p.importe_autorizado == null || !ls.length) return ls;
+      const dif = Math.round((Number(p.importe_autorizado) - totalesLineas(ls, 0).base) * 100) / 100;
+      return Math.abs(dif) < 0.01 ? ls : [...ls, { codigo: "AJUSTE", descripcion: "Ajuste a importe autorizado", cantidad: 1, precio: dif, dto: 0 }];
+    };
+    const filasExp = () => elegidos.map((p) => ({ ...p, importe: importeParte(p) || 0, lineas: lineasCuadradas(p),
       trabajo: ((p.lineas_realizadas || []).length ? p.lineas_realizadas : (p.lineas_valoracion || [])).map((l) => `${l.codigo || ""} ${l.descripcion || ""}`.trim()).join("; ") || (p.averia || "").slice(0, 90) }));
     // Todos los archivos empiezan por el nombre de la empresa, para que MULTIBETT vea de quién vienen
     const nombreRelacion = async (ext, ref) => {
@@ -754,7 +762,7 @@ async function vistaFacturacion() {
           await cargarXLSX();
           const filas = filasExp().map((p) => ({ Terminado: fFecha(p.realizado_at), Aseguradora: p.aseguradora, Expediente: p.expediente, Encargo: p.num_encargo,
             Cliente: p.nombre, Dirección: p.direccion || "", Población: [p.codigo_postal, p.poblacion].filter(Boolean).join(" "),
-            Códigos: (p.lineas || []).map((l) => l.codigo || "").filter(Boolean).join("\n"), Trabajo: (p.lineas || []).length ? p.lineas.map((l) => `${l.codigo ? l.codigo + " · " : ""}${l.descripcion || ""}`).join("\n") : p.trabajo, "Importe sin IVA (€)": p.importe, Factura: p.factura_ref || "" }));
+            Códigos: (p.lineas || []).map((l) => l.codigo || "").filter(Boolean).join("\n"), Trabajo: (p.lineas || []).length ? p.lineas.map((l) => `${l.codigo ? l.codigo + " · " : ""}${Number(l.cantidad) && Number(l.cantidad) !== 1 ? l.cantidad + " × " : ""}${l.descripcion || ""}${l.precio != null ? " · " + fEuros(importeLinea(l)) : ""}`).join("\n") : p.trabajo, "Importe sin IVA (€)": p.importe, Factura: p.factura_ref || "" }));
           const t = conIVA(filas.reduce((a, f) => a + (f["Importe sin IVA (€)"] || 0), 0));
           filas.push({}, { Trabajo: "Base imponible", "Importe sin IVA (€)": t.base }, { Trabajo: `IVA ${IVA_FACT()}%`, "Importe sin IVA (€)": t.iva }, { Trabajo: "TOTAL", "Importe sin IVA (€)": t.total });
           const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(filas), nombreMes(mes).slice(0, 30));
