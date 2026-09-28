@@ -4,7 +4,7 @@ import {
   fFecha, fFechaHora, fEuros, hace, toLocalInput, blobABase64, comprimirImagen, panelFirma, toast,
   importeLinea, totalesLineas, buscarEnTarifa, codigoAdicional, chipDias, recortarImagen, linkCalendario, diasParte, zonaDe,
 } from "./util.js";
-import { generarInforme } from "./pdf.js";
+import { generarInforme, generarRelacion } from "./pdf.js";
 
 const CFG = window.APP_CONFIG;
 const DEST = {
@@ -23,6 +23,7 @@ async function cargarAjustes() {
     if (a.WHATSAPP_APP) CFG.WHATSAPP_APP = a.WHATSAPP_APP;
     if (Array.isArray(a.ZONAS)) CFG.ZONAS = a.ZONAS;
     if (a.PRECIOS_IA && typeof a.PRECIOS_IA === "object") CFG.PRECIOS_IA = a.PRECIOS_IA;
+    if (a.DIAS_COBRO) CFG.DIAS_COBRO = Number(a.DIAS_COBRO);
     ajustesCargados = true;
   } catch { /* se usan los valores de config.js */ }
 }
@@ -112,6 +113,7 @@ async function router() {
   if (ruta === "compartido") return vistaCompartido();
   if (ruta === "agenda") return vistaAgenda();
   if (ruta === "lote") return vistaLote();
+  if (ruta === "facturacion") return (S.yo?.es_admin || api.modo !== "supabase") ? vistaFacturacion() : (location.hash = "/");
   if (ruta === "tarifa") return S.yo?.es_admin ? vistaTarifa() : (location.hash = "/");
   if (ruta === "ajustes") return S.yo?.es_admin ? vistaAjustes() : (location.hash = "/");
   location.hash = "/";
@@ -364,6 +366,13 @@ function datosResumen() {
     { k: "falta", v: "autorizar", t: "⏳ Valorados sin respuesta (más de 7 días)", n: cuenta("falta", "autorizar"), aviso: true },
     { k: "falta", v: "terminar", t: "🔧 Autorizados pendientes de hacer", n: cuenta("falta", "terminar"), aviso: false },
     { k: "dias", v: "30", t: "🔴 Atascados (más de 30 días)", n: ps.filter((p) => p.estado !== "realizado" && diasParte(p) > 30).length, aviso: true },
+    ...(verPrecios() && (S.yo?.es_admin || api.modo !== "supabase") ? (() => {
+      const f = datosFacturacion();
+      return [
+        { ir: "/facturacion", t: "🧾 Terminados de meses anteriores sin facturar", n: f.sinFacturarAnteriores.length, aviso: true },
+        { ir: "/facturacion", t: "💶 Facturas vencidas sin cobrar", n: f.facturas.filter((x) => !x.cobrado && x.dias != null && x.dias < 0).length, aviso: true },
+      ];
+    })() : []),
   ];
 }
 function sheetResumen(forzar) {
@@ -382,6 +391,7 @@ function sheetResumen(forzar) {
     <button class="btn texto ancho" data-cerrar>Cerrar</button>`);
   $$(".res-fila", s).forEach((el) => el.addEventListener("click", () => {
     const x = d[el.dataset.i];
+    if (x.ir) { cerrarSheet(); location.hash = x.ir; return; }
     if (x.k === "dias") { S.fx = { dias: "30" }; S.filtro = "activos"; }
     else { S.fx = { [x.k]: x.v }; S.filtro = "todos"; }
     S.filtroZona = ""; sessionSet("filtroZona", ""); sessionSet("filtro", S.filtro); guardarFx();
@@ -453,12 +463,7 @@ async function vistaAgenda() {
 async function copiaSeguridad() {
   try {
     await conCarga("Preparando copia…", async () => {
-      if (!window.XLSX) await new Promise((ok, ko) => {
-        const sc = document.createElement("script");
-        sc.src = "https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js";
-        sc.onload = ok; sc.onerror = () => ko(new Error("No se pudo cargar el generador de Excel (¿sin conexión?)"));
-        document.head.appendChild(sc);
-      });
+      await cargarXLSX();
       const { partes, eventos } = await api.exportarTodo();
       const precios = verPrecios();
       const exp = new Map(partes.map((p) => [p.id, p]));
@@ -518,6 +523,171 @@ async function pintarUsoIA() {
     <p class="suave">${este.cl} con Claude${este.ge ? ` · ${este.ge} con Gemini (gratis)` : ""}. ${mes(m1).charAt(0).toUpperCase() + mes(m1).slice(1)}: ${ant.n} lecturas · ${usd(ant.total)}.</p>`;
 }
 
+// ------------------------------------------------------------------ Espacio usado
+async function pintarEspacio() {
+  const cont = $("#espacio"); if (!cont) return;
+  let u;
+  try { u = await api.usoAlmacenamiento(); } catch { cont.innerHTML = '<p class="suave">No se pudo consultar el espacio.</p>'; return; }
+  if (!u) { cont.innerHTML = '<p class="suave">Sin datos.</p>'; return; }
+  const mb = (b) => (b / 1048576).toLocaleString("es-ES", { maximumFractionDigits: b > 1e8 ? 0 : 1 }) + " MB";
+  const barra = (usado, total, txt) => {
+    const pct = Math.min(100, Math.round(usado / total * 100));
+    const col = pct >= 90 ? "#dc2626" : pct >= 75 ? "#f59e0b" : "#16a34a";
+    return `<div class="espacio-fila"><div class="h3-fila"><span>${txt}</span><b>${mb(usado)} de ${mb(total)} · ${pct}%</b></div>
+      <div class="barra-prog"><i style="width:${pct}%;background:${col}"></i></div></div>`;
+  };
+  const LIM_ARCH = 1024 * 1048576, LIM_BD = 500 * 1048576;
+  const pctA = u.archivos_bytes / LIM_ARCH;
+  const medio = u.archivos_n ? u.archivos_bytes / u.archivos_n : 0;
+  const quedan = medio ? Math.max(0, Math.floor((LIM_ARCH - u.archivos_bytes) / medio)) : null;
+  cont.innerHTML = barra(u.archivos_bytes, LIM_ARCH, `Fotos y documentos (${u.archivos_n.toLocaleString("es-ES")} archivos)`)
+    + barra(u.bd_bytes, LIM_BD, "Datos de los partes")
+    + `<p class="suave">Límites del plan gratuito de Supabase.${quedan != null ? ` Al ritmo actual caben unos <b>${quedan.toLocaleString("es-ES")}</b> archivos más.` : ""}</p>`
+    + (pctA >= 0.75 ? `<p class="aviso-rojo">⚠️ El espacio para fotos se está llenando. Descarga una copia de seguridad y avísame para ampliar o limpiar fotos antiguas.</p>` : "");
+}
+
+async function cargarXLSX() {
+  if (window.XLSX) return;
+  await new Promise((ok, ko) => {
+    const sc = document.createElement("script");
+    sc.src = "https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js";
+    sc.onload = ok; sc.onerror = () => ko(new Error("No se pudo cargar el generador de Excel (¿sin conexión?)"));
+    document.head.appendChild(sc);
+  });
+}
+
+// ------------------------------------------------------------------ Facturación mensual
+const DIAS_COBRO = () => Number(CFG.DIAS_COBRO ?? 60);
+function importeParte(p) {
+  if ((p.lineas_realizadas || []).length) return totalesLineas(p.lineas_realizadas, 0).base;
+  if (p.importe_autorizado != null) return Number(p.importe_autorizado);
+  if ((p.lineas_valoracion || []).length) return totalesLineas(p.lineas_valoracion, 0).base;
+  if (p.importe_valorado != null) return Number(p.importe_valorado);
+  return null;
+}
+const mesDe = (iso) => iso ? new Date(iso).toLocaleDateString("sv-SE").slice(0, 7) : "";
+const nombreMes = (k) => { const [a, m] = k.split("-"); const t = new Date(+a, +m - 1, 1).toLocaleDateString("es-ES", { month: "long", year: "numeric" }); return t.charAt(0).toUpperCase() + t.slice(1); };
+const sumarDias = (fecha, d) => { const x = new Date(fecha + "T12:00:00"); x.setDate(x.getDate() + d); return x; };
+
+function datosFacturacion() {
+  const term = (S.partes || []).filter((p) => p.estado === "realizado");
+  const mesActual = mesDe(new Date().toISOString());
+  const sinFacturarAnteriores = term.filter((p) => !p.factura_ref && p.realizado_at && mesDe(p.realizado_at) < mesActual);
+  const facturas = new Map();
+  for (const p of term.filter((x) => x.factura_ref)) {
+    const k = p.factura_ref + "|" + (p.facturado_at || "");
+    if (!facturas.has(k)) facturas.set(k, { ref: p.factura_ref, fecha: p.facturado_at, partes: [], cobrado: p.cobrado_at });
+    facturas.get(k).partes.push(p);
+  }
+  const hoy = new Date(); hoy.setHours(0, 0, 0, 0);
+  const lista = [...facturas.values()].map((f) => ({ ...f, total: f.partes.reduce((a, p) => a + (importeParte(p) || 0), 0),
+    vence: f.fecha ? sumarDias(f.fecha, DIAS_COBRO()) : null, cobrado: f.partes.every((p) => p.cobrado_at) ? f.partes[0].cobrado_at : null }))
+    .map((f) => ({ ...f, dias: f.vence ? Math.floor((f.vence - hoy) / 864e5) : null }))
+    .sort((a, b) => (b.fecha || "").localeCompare(a.fecha || ""));
+  return { term, sinFacturarAnteriores, facturas: lista };
+}
+
+async function vistaFacturacion() {
+  try { S.partes = await api.listarPartes(); } catch { /* se usa lo que haya */ }
+  let mes = sessionGet("factMes") || mesDe(new Date().toISOString());
+  const sel = new Set();
+  app.innerHTML = `
+  <header class="barra">
+    <button class="icono" id="volver" aria-label="Volver">${I.back}</button>
+    <h1>Facturación mensual</h1><span></span>
+  </header>
+  <main class="fact" id="fact"></main>`;
+  $("#volver").onclick = () => (location.hash = "/");
+  const pinta = () => {
+    const { term, sinFacturarAnteriores, facturas } = datosFacturacion();
+    const meses = [...new Set([mesDe(new Date().toISOString()), ...term.map((p) => mesDe(p.realizado_at)).filter(Boolean)])].sort().reverse();
+    if (!meses.includes(mes)) mes = meses[0];
+    const delMes = term.filter((p) => mesDe(p.realizado_at) === mes).sort((a, b) => (a.realizado_at || "").localeCompare(b.realizado_at || ""));
+    if (!sel.size) delMes.filter((p) => !p.factura_ref).forEach((p) => sel.add(p.id));
+    const elegidos = delMes.filter((p) => sel.has(p.id));
+    const total = elegidos.reduce((a, p) => a + (importeParte(p) || 0), 0);
+    const sinImporte = elegidos.filter((p) => importeParte(p) == null).length;
+    const pendientes = facturas.filter((f) => !f.cobrado);
+    const pendTotal = pendientes.reduce((a, f) => a + f.total, 0);
+    $("#fact").innerHTML = `
+      ${sinFacturarAnteriores.length ? `<div class="aviso-rojo">🧾 Hay <b>${sinFacturarAnteriores.length}</b> parte(s) terminados en meses anteriores sin facturar (${[...new Set(sinFacturarAnteriores.map((p) => nombreMes(mesDe(p.realizado_at))))].join(", ")}).</div>` : ""}
+      <section class="tarjeta">
+        <div class="h3-fila"><h3>Terminados en</h3>
+          <select id="fMes">${meses.map((m) => `<option value="${m}" ${m === mes ? "selected" : ""}>${nombreMes(m)}</option>`).join("")}</select></div>
+        ${delMes.length ? `<div class="fact-lista">${delMes.map((p) => {
+          const imp = importeParte(p);
+          const est = p.cobrado_at ? `<em class="ok">Cobrado ${fFecha(p.cobrado_at)}</em>` : p.factura_ref ? `<em>Facturado · ${esc(p.factura_ref)}</em>` : "";
+          return `<label class="fact-fila ${p.factura_ref ? "facturado" : ""}">
+            <input type="checkbox" data-id="${p.id}" ${sel.has(p.id) ? "checked" : ""}>
+            <span class="fact-info"><b>${esc(p.nombre || "Sin nombre")}</b><small>${fFecha(p.realizado_at)} · ${esc(p.aseguradora || "")} ${esc(p.expediente || "")}${p.poblacion ? " · " + esc(p.poblacion) : ""}</small>${est}</span>
+            <b class="fact-imp ${imp == null ? "sin" : ""}">${imp == null ? "sin importe" : fEuros(imp)}</b></label>`;
+        }).join("")}</div>
+        <div class="fact-total"><span>${elegidos.length} seleccionados${sinImporte ? ` · <b class="rojo">${sinImporte} sin importe</b>` : ""}</span><b>${fEuros(total)} <small>sin IVA</small></b></div>
+        <div class="lista-botones">
+          <button class="btn grande" id="fPDF" ${elegidos.length ? "" : "disabled"}>${I.pdf}<span><b>Relación en PDF</b><small>Para mandar a ${esc(DEST.nombre)} con la factura</small></span></button>
+          <button class="btn grande" id="fXLS" ${elegidos.length ? "" : "disabled"}>📊<span><b>Relación en Excel</b></span></button>
+          <button class="btn primario grande" id="fMarcar" ${elegidos.some((p) => !p.factura_ref) ? "" : "disabled"}>✅<span><b>Marcar como facturados</b><small>Te pide el nº de factura. Cobro previsto a ${DIAS_COBRO()} días</small></span></button>
+        </div>` : '<p class="suave">No hay partes terminados en este mes. Un parte cuenta aquí cuando lo marcas como <b>Realizado</b>.</p>'}
+      </section>
+      <section class="tarjeta">
+        <div class="h3-fila"><h3>Pendiente de cobro</h3><b>${fEuros(pendTotal)}</b></div>
+        ${pendientes.length ? pendientes.map((f) => `
+          <div class="factura ${f.dias != null && f.dias < 0 ? "vencida" : ""}">
+            <div><b>Factura ${esc(f.ref)}</b><small>${f.fecha ? fFecha(f.fecha) : ""} · ${f.partes.length} partes · ${fEuros(f.total)}</small>
+              <small>${f.vence ? (f.dias < 0 ? `⚠️ Vencida hace ${-f.dias} días (${fFecha(f.vence)})` : `Cobro previsto ${fFecha(f.vence)} · en ${f.dias} días`) : ""}</small></div>
+            <button class="btn peq" data-cobrar="${esc(f.ref)}|${esc(f.fecha || "")}">Cobrada</button>
+          </div>`).join("") : '<p class="suave">Nada pendiente de cobro.</p>'}
+        ${facturas.filter((f) => f.cobrado).slice(0, 5).map((f) => `<div class="factura cobrada"><div><b>Factura ${esc(f.ref)}</b><small>${fEuros(f.total)} · cobrada ${fFecha(f.cobrado)}</small></div>
+          <button class="btn peq texto" data-descobrar="${esc(f.ref)}|${esc(f.fecha || "")}">Deshacer</button></div>`).join("")}
+      </section>`;
+    $("#fMes").onchange = (e) => { mes = e.target.value; sessionSet("factMes", mes); sel.clear(); pinta(); };
+    $$("#fact .fact-fila input").forEach((c) => c.onchange = () => { c.checked ? sel.add(c.dataset.id) : sel.delete(c.dataset.id); pinta(); });
+    const filasExp = () => elegidos.map((p) => ({ ...p, importe: importeParte(p) || 0,
+      trabajo: ((p.lineas_realizadas || []).length ? p.lineas_realizadas : (p.lineas_valoracion || [])).map((l) => `${l.codigo || ""} ${l.descripcion || ""}`.trim()).join("; ") || (p.averia || "").slice(0, 90) }));
+    $("#fPDF")?.addEventListener("click", async () => {
+      try {
+        const blob = await conCarga("Generando PDF…", async () => generarRelacion(filasExp(), `RELACIÓN DE TRABAJOS · ${nombreMes(mes).toUpperCase()}`, DEST.nombre));
+        const nombre = `Relacion_${mes}_${(DEST.nombre || "").replace(/\W+/g, "")}.pdf`;
+        const file = new File([blob], nombre, { type: "application/pdf" });
+        if (navigator.canShare?.({ files: [file] })) { try { await navigator.share({ files: [file], title: nombre }); return; } catch (e) { if (e.name === "AbortError") return; } }
+        descargar(blob, nombre);
+      } catch { /* conCarga avisa */ }
+    });
+    $("#fXLS")?.addEventListener("click", async () => {
+      try {
+        await conCarga("Generando Excel…", async () => {
+          await cargarXLSX();
+          const filas = filasExp().map((p) => ({ Terminado: fFecha(p.realizado_at), Aseguradora: p.aseguradora, Expediente: p.expediente, Encargo: p.num_encargo,
+            Cliente: p.nombre, Población: p.poblacion, Trabajo: p.trabajo, "Importe sin IVA (€)": p.importe, Factura: p.factura_ref || "" }));
+          filas.push({ Cliente: "TOTAL", "Importe sin IVA (€)": filas.reduce((a, f) => a + (f["Importe sin IVA (€)"] || 0), 0) });
+          const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(filas), nombreMes(mes).slice(0, 30));
+          descargar(new Blob([XLSX.write(wb, { bookType: "xlsx", type: "array" })], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }), `Relacion_${mes}.xlsx`);
+        });
+      } catch { /* conCarga avisa */ }
+    });
+    $("#fMarcar")?.addEventListener("click", async () => {
+      const aMarcar = elegidos.filter((p) => !p.factura_ref);
+      const sinImp = aMarcar.filter((p) => importeParte(p) == null);
+      if (sinImp.length && !confirm(`${sinImp.length} parte(s) no tienen importe (${sinImp.map((p) => p.nombre || p.expediente).join(", ")}). ¿Facturarlos igualmente a 0 €?`)) return;
+      const ref = prompt(`Nº de factura o nota para ${aMarcar.length} parte(s) (${fEuros(aMarcar.reduce((a, p) => a + (importeParte(p) || 0), 0))}):`, `${mes}`);
+      if (!ref || !ref.trim()) return;
+      const fecha = new Date().toLocaleDateString("sv-SE");
+      try {
+        await conCarga("Guardando…", async () => { for (const p of aMarcar) { await api.actualizarParte(p.id, { factura_ref: ref.trim(), facturado_at: fecha, cobrado_at: null }); Object.assign(p, { factura_ref: ref.trim(), facturado_at: fecha, cobrado_at: null }); } });
+        toast(`Factura ${ref.trim()} anotada. Cobro previsto: ${fFecha(sumarDias(fecha, DIAS_COBRO()))}`, "ok"); sel.clear(); pinta();
+      } catch { /* conCarga avisa */ }
+    });
+    const cambiarCobro = async (clave, valor) => {
+      const [ref, fecha] = clave.split("|");
+      const ps = (S.partes || []).filter((p) => p.factura_ref === ref && (p.facturado_at || "") === fecha);
+      try { await conCarga("Guardando…", async () => { for (const p of ps) { await api.actualizarParte(p.id, { cobrado_at: valor }); p.cobrado_at = valor; } }); pinta(); } catch { /* conCarga avisa */ }
+    };
+    $$("[data-cobrar]").forEach((b) => b.onclick = () => { if (confirm(`¿Marcar la factura ${b.dataset.cobrar.split("|")[0]} como cobrada hoy?`)) cambiarCobro(b.dataset.cobrar, new Date().toLocaleDateString("sv-SE")); });
+    $$("[data-descobrar]").forEach((b) => b.onclick = () => cambiarCobro(b.dataset.descobrar, null));
+  };
+  pinta();
+}
+
 function tarjetaParte(p) {
   const e = estadoInfo(p.estado);
   const asignado = S.miembros.find((m) => m.user_id === p.asignado_a)?.nombre;
@@ -550,6 +720,7 @@ function menuUsuario() {
     <p class="suave">${esc(S.yo?.email || "")}</p>
     <div class="lista-botones">
       ${S.yo?.es_admin ? '<button class="btn primario ancho" id="irAjustes">⚙️ Ajustes y usuarios</button>' : ""}
+      ${S.yo?.es_admin || api.modo !== "supabase" ? '<button class="btn ancho" id="irFact">💶 Facturación mensual</button>' : ""}
       ${api.modo === "supabase" ? '<button class="btn ancho" id="cambiarPw">Cambiar contraseña</button>' : ""}
       ${yaInstalada() ? "" : '<button class="btn ancho" id="instalarMenu">Instalar como app</button>'}
       <button class="btn ancho" id="irPapelera">🗑 Papelera (partes borrados)</button>
@@ -561,6 +732,7 @@ function menuUsuario() {
   $("#exportar", s).addEventListener("click", exportarCSV);
   $("#irPapelera", s).addEventListener("click", () => { cerrarSheet(); location.hash = "/papelera"; });
   $("#irAjustes", s)?.addEventListener("click", () => { cerrarSheet(); location.hash = "/ajustes"; });
+  $("#irFact", s)?.addEventListener("click", () => { cerrarSheet(); location.hash = "/facturacion"; });
   $("#instalarMenu", s)?.addEventListener("click", instalarApp);
   $("#cambiarPw", s)?.addEventListener("click", async () => {
     const pw = prompt("Nueva contraseña (mínimo 8 caracteres)");
@@ -636,6 +808,9 @@ async function leerCompartidos() {
   if (!("caches" in window)) return [];
   const c = await caches.open("partes-compartido");
   const files = [];
+  S.diagCompartir = null;
+  const d = await c.match("diagnostico");
+  if (d) { try { S.diagCompartir = await d.json(); } catch { /* nada */ } await c.delete("diagnostico"); }
   for (const req of await c.keys()) {
     const r = await c.match(req);
     if (!r) continue;
@@ -649,12 +824,25 @@ async function leerCompartidos() {
 
 async function vistaCompartido() {
   const nuevos = await leerCompartidos();
-  if (nuevos.length) S.compartidos = nuevos;
+  if (nuevos.length || S.diagCompartir) S.compartidos = nuevos;   // un envío nuevo sustituye al anterior
   const files = S.compartidos || [];
   history.replaceState(null, "", location.pathname + "#/");
   S.saltarResumen = true;
   await vistaLista();
-  if (!files.length) return toast("No ha llegado ningún archivo. Vuelve a compartirlo.", "error");
+  if (!files.length) {
+    const dg = S.diagCompartir || {};
+    const s = abrirSheet(`
+      <h2>No ha llegado el archivo</h2>
+      <p>La app se abrió desde WhatsApp pero no recibió la foto. Puedes elegirla directamente:</p>
+      <div class="lista-botones">
+        <button class="btn primario grande" id="dgElegir">${I.file}<span><b>Elegir la foto o PDF</b><small>Desde la galería o descargas</small></span></button>
+        <button class="btn texto ancho" data-cerrar>Cerrar</button>
+      </div>
+      <details class="suave"><summary>Detalle técnico (mándame captura de esto)</summary>
+        <pre class="diag">${esc(JSON.stringify(dg, null, 1) || "sin datos: no pasó por el service worker")}</pre></details>`);
+    $("#dgElegir", s).onclick = () => { cerrarSheet(); $("#inArchivo").click(); };
+    return;
+  }
   const esPDF = (f) => f.type === "application/pdf" || /\.pdf$/i.test(f.name);
   const imgs = files.filter((f) => !esPDF(f) && /^image\//.test(f.type || "image/"));
   const s = abrirSheet(`
@@ -1542,6 +1730,8 @@ function sheetFase(p, destino) {
     if (!destino && !nota) return toast("Escribe la nota", "error");
     const cambios = {};
     if (destino) cambios.estado = destino;
+    if (destino === "realizado") cambios.realizado_at = new Date().toISOString();
+    else if (destino && p.estado === "realizado") cambios.realizado_at = null;
     if (f.has("fecha_cita")) cambios.fecha_cita = f.get("fecha_cita") ? new Date(f.get("fecha_cita")).toISOString() : null;
     if (f.has("importe_valorado")) cambios.importe_valorado = f.get("importe_valorado") === "" ? null : Number(f.get("importe_valorado"));
     if (f.has("importe_autorizado")) cambios.importe_autorizado = f.get("importe_autorizado") === "" ? null : Number(f.get("importe_autorizado"));
@@ -1937,11 +2127,16 @@ async function vistaAjustes() {
     <section class="tarjeta">
       <h3>A quién se envían los PDF</h3>
       <div class="dos"><label>Nombre<input name="d_nombre" value="${esc(D.nombre)}"></label><label>WhatsApp<input name="d_telefono" type="tel" value="${esc(D.telefono)}"></label></div>
+      <label>Días que tarda en pagar las facturas<input name="dias_cobro" type="number" min="0" step="1" value="${CFG.DIAS_COBRO ?? 60}"></label>
     </section>
     <section class="tarjeta">
       <h3>Tarifa de precios</h3>
       <a class="btn ancho" href="#/tarifa">📋 Ver y editar la tarifa (códigos y precios)</a>
       <label>IVA que se suma a las valoraciones (%, 0 = sin IVA)<input name="iva" type="number" step="1" min="0" value="${CFG.IVA ?? 21}"></label>
+    </section>
+    <section class="tarjeta">
+      <h3>Espacio usado</h3>
+      <div id="espacio"><p class="suave">Cargando…</p></div>
     </section>
     <section class="tarjeta">
       <h3>Gasto de la IA</h3>
@@ -1990,6 +2185,7 @@ async function vistaAjustes() {
     const datos = {
       EMPRESA: { nombre: f.e_nombre.trim(), cif: f.e_cif.trim(), telefono: f.e_telefono.trim(), email: f.e_email.trim(), direccion: f.e_direccion.trim() },
       DESTINO_INFORMES: { nombre: f.d_nombre.trim(), telefono: f.d_telefono.replace(/\s/g, "") },
+      DIAS_COBRO: Number(f.dias_cobro) || 60,
       ASEGURADORAS: f.aseguradoras.split("\n").map((x) => x.trim()).filter(Boolean),
       MENSAJE_CLIENTE: f.mensaje.trim(),
       IVA: Number(f.iva) || 0,
@@ -2011,6 +2207,7 @@ async function vistaAjustes() {
   $("#nuevoUsuario").onclick = sheetNuevoUsuario;
   $("#btnCopia").onclick = copiaSeguridad;
   pintarUsoIA();
+  pintarEspacio();
   pintarUsuarios();
 }
 

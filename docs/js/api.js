@@ -41,6 +41,7 @@ function crearApiSupabase() {
     async usoIA(desde) {
       return ok(await sb.from("lecturas_ia").select("created_at,proveedor,modelo,tokens_in,tokens_out,coste_usd").gte("created_at", desde).order("created_at", { ascending: false }).limit(5000));
     },
+    async usoAlmacenamiento() { const { data, error } = await sb.rpc("uso_almacenamiento"); if (error) throw error; return data; },
     async exportarTodo() {
       const [p, e] = await Promise.all([
         sb.from("partes").select("*").order("created_at").limit(10000),
@@ -163,6 +164,7 @@ function crearApiDemo() {
     async listarPartes() { return db.partes.filter((p) => !p.borrado_at).sort((a, b) => b.updated_at.localeCompare(a.updated_at)); },
     async listarPapelera() { return db.partes.filter((p) => p.borrado_at); },
     async exportarTodo() { return { partes: db.partes, eventos: db.eventos }; },
+    async usoAlmacenamiento() { return { archivos_bytes: 312e6, archivos_n: 1040, bd_bytes: 24e6 }; },
     async usoIA() { return (db.usoIA ??= [
       { created_at: new Date().toISOString(), proveedor: "anthropic", modelo: "claude-sonnet-4-5", tokens_in: 4100, tokens_out: 380, coste_usd: 0.0180 },
       { created_at: new Date(Date.now() - 864e5).toISOString(), proveedor: "anthropic", modelo: "claude-sonnet-4-5", tokens_in: 6900, tokens_out: 420, coste_usd: 0.0270 },

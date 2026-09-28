@@ -218,3 +218,52 @@ export async function generarInforme(parte, api, miembros = [], opc = {}) {
   const nombreArchivo = `${esFinal ? "Terminado" : "Visita"}_${(parte.aseguradora || "parte").replace(/\s+/g, "")}_${(parte.expediente || parte.id.slice(0, 8)).replace(/[^\w-]/g, "")}.pdf`;
   return { blob: doc.output("blob"), nombre: nombreArchivo };
 }
+
+// ---- Relación mensual de trabajos terminados (para facturar a MULTIBETT)
+export function generarRelacion(filas, titulo, destino = "") {
+  const { jsPDF } = window.jspdf;
+  const E = window.APP_CONFIG.EMPRESA;
+  const doc = new jsPDF({ unit: "mm", format: "a4", orientation: "landscape" });
+  const W = 297, M = 12, ALTO = 210;
+  let y = 0;
+  const cab = () => {
+    doc.setFillColor(15, 23, 42); doc.rect(0, 0, W, 24, "F");
+    doc.setTextColor(255); doc.setFont("helvetica", "bold"); doc.setFontSize(14);
+    doc.text(E.nombre || "", M, 11);
+    doc.setFont("helvetica", "normal"); doc.setFontSize(8.5);
+    doc.text([E.cif && `CIF ${E.cif}`, E.telefono, E.email, E.direccion].filter(Boolean).join("  ·  "), M, 18);
+    doc.setFont("helvetica", "bold"); doc.setFontSize(11);
+    doc.text(titulo, W - M, 11, { align: "right" });
+    doc.setFont("helvetica", "normal"); doc.setFontSize(8.5);
+    doc.text(`${destino ? "Para: " + destino + "  ·  " : ""}Emitida: ${fFecha(new Date())}`, W - M, 18, { align: "right" });
+    doc.setTextColor(20); y = 33;
+  };
+  const cols = [
+    { t: "Terminado", w: 22 }, { t: "Aseguradora", w: 30 }, { t: "Expediente", w: 30 }, { t: "Encargo", w: 24 },
+    { t: "Cliente", w: 58 }, { t: "Población", w: 38 }, { t: "Trabajo", w: 51 }, { t: "Importe", w: 20, r: true },
+  ];
+  const xs = []; let xx = M; cols.forEach((c) => { xs.push(xx); xx += c.w; });
+  const fila = (vals, negrita) => {
+    doc.setFont("helvetica", negrita ? "bold" : "normal"); doc.setFontSize(8);
+    const partes = vals.map((v, i) => doc.splitTextToSize(String(v ?? ""), cols[i].w - 2));
+    const h = Math.max(...partes.map((p) => p.length)) * 3.6 + 2;
+    if (y + h > ALTO - 14) { doc.addPage(); cab(); cabecera(); }
+    partes.forEach((p, i) => cols[i].r ? doc.text(p, xs[i] + cols[i].w - 1, y, { align: "right" }) : doc.text(p, xs[i] + 1, y));
+    y += h; doc.setDrawColor(226, 232, 240); doc.line(M, y - 2.5, W - M, y - 2.5);
+  };
+  const cabecera = () => {
+    doc.setFillColor(241, 245, 249); doc.rect(M, y - 4, W - 2 * M, 6, "F");
+    doc.setTextColor(71, 85, 105); fila(cols.map((c) => c.t), true); doc.setTextColor(20);
+  };
+  cab(); cabecera();
+  let total = 0;
+  for (const f of filas) {
+    total += Number(f.importe) || 0;
+    fila([fFecha(f.realizado_at), f.aseguradora, f.expediente, f.num_encargo, f.nombre, f.poblacion, f.trabajo, fEuros(f.importe)]);
+  }
+  y += 3; doc.setFont("helvetica", "bold"); doc.setFontSize(11);
+  doc.text(`${filas.length} trabajos  ·  TOTAL (sin IVA): ${fEuros(total)}`, W - M, y, { align: "right" });
+  const n = doc.getNumberOfPages();
+  for (let i = 1; i <= n; i++) { doc.setPage(i); doc.setFontSize(7.5); doc.setTextColor(150); doc.text(`Página ${i} de ${n}`, W - M, ALTO - 6, { align: "right" }); }
+  return doc.output("blob");
+}

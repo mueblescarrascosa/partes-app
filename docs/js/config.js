@@ -36,6 +36,9 @@ window.APP_CONFIG = {
     { nombre: "Las Villas", pueblos: ["Villanueva del Arzobispo", "Villacarrillo", "Iznatoraf", "Sorihuela del Guadalimar", "Mogón"] },
   ],
 
+  // Días que tarda MULTIBETT en pagar las facturas
+  DIAS_COBRO: 60,
+
   // Tarifas de la IA en $ por millón de tokens [entrada, salida] (editables en Ajustes)
   PRECIOS_IA: { "claude-sonnet-4-5": [3, 15], "claude-haiku-4-5": [1, 5] },
 
