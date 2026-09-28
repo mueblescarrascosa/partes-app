@@ -34,7 +34,8 @@ Extrae los datos del documento y responde ÚNICAMENTE con un objeto JSON, sin te
   "averia": "descripción clara del daño o avería y del trabajo encargado (causa, estancia afectada, gremio)",
   "tramitador_nombre": "nombre del tramitador/gestor de la compañía",
   "tramitador_telefono": "teléfono del tramitador",
-  "tramitador_email": "email del tramitador"
+  "tramitador_email": "email del tramitador",
+  "tipo": "'conexion' si el parte es un servicio de CONEXIÓN (la compañía solo pone en contacto al cliente con el profesional para que le haga un PRESUPUESTO PARTICULAR que paga el cliente; suele indicarse como 'Conexión', 'Servicio de conexión', 'Tipo encargo: Conexión' o similar, sobre todo en Santalucía e Iris Global). En cualquier otro caso 'siniestro'. OJO: la palabra 'conexión' dentro de la descripción de una avería de fontanería o electricidad (p.ej. 'fuga en la conexión del latiguillo') NO lo convierte en conexión."
 }
 
 Formatos conocidos:
