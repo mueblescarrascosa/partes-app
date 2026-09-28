@@ -53,7 +53,7 @@ Formatos conocidos:
 - MAPFRE: cabecera "MAPFRE ESPAÑA, S.A. / Parte de Trabajo <GREMIO>". expediente = "Nº de Expediente" (tipo V73739261, también aparece al final de "Referencia"); poliza = "Nº Póliza"; fecha_encargo = "Fecha" de la cabecera; tramitador_nombre = "Tramitador del Expediente"; telefono = "Teléfonos de contacto". En averia empieza por el gremio del título (p.ej. "CERRADURAS: ...") y usa la "Descripción del expediente" si aparece; el texto "CLIENTE PLATINO / atención prioritaria..." resúmelo como "Cliente platino: contactar en menos de 12 h".
 
 Reglas:
-- Usa null en lo que no aparezca. No inventes datos.
+- Usa null en lo que no aparezca. No inventes datos. Los ejemplos de estas instrucciones son solo ejemplos: NUNCA los copies como datos. Si la imagen no se lee bien (borrosa, girada, cortada), devuelve null en lo que no leas con seguridad antes que rellenarlo con algo parecido.
 - Los datos del "Profesional" o "Reparador" (código profesional, domicilio y CIF del taller) son de la empresa que recibe el encargo, NO del asegurado: ignóralos.
 - El "Gestor" o "Tramitador" es la persona de la compañía que lleva el expediente.
 - No confundas el teléfono de la compañía con el del asegurado.
@@ -62,7 +62,7 @@ Reglas:
 - CÓDIGO POSTAL tapado en parte: complétalo solo si la provincia deja claras las cifras que faltan (Jaén empieza por 23, p.ej. "?3006" en Jaén = 23006); si no, null.
 - NÚMEROS DE REFERENCIA (expediente, siniestro, encargo, póliza): cópialos cifra a cifra, sin saltarte ni repetir ninguna. Cuenta las cifras antes de responder.
 - CAMPOS QUE NO SE PUEDEN CONFUNDIR (errores graves):
-  · nombre = el ASEGURADO / CLIENTE: casillas "NOMBRE" + "APELLIDOS O RAZÓN SOCIAL" (júntalas: "ANGEL RODRIGUEZ ESQUINAS") o "Nombre:" en Mapfre. NUNCA el "GESTOR", el "Tramitador del Expediente" ni el "Profesional" (MULTIBETT).
+  · nombre = el ASEGURADO / CLIENTE: casillas "NOMBRE" + "APELLIDOS O RAZÓN SOCIAL" (júntalas en un solo nombre completo) o "Nombre:" en Mapfre. NUNCA el "GESTOR", el "Tramitador del Expediente" ni el "Profesional" (MULTIBETT).
   · direccion = la casilla "DOMICILIO DE ACTUACIÓN" o "Domicilio:" (calle y número). NUNCA el texto de "DESCRIPCIÓN DE LOS TRABAJOS A REALIZAR".
   · averia = el texto de "DESCRIPCIÓN DE LOS TRABAJOS A REALIZAR" / "DESCRIPCIÓN DEL TRABAJO A REALIZAR".
   · En las tablas de Iris Global y Santalucía cada dato está en la casilla JUSTO DEBAJO de su título (NOMBRE → debajo el nombre; GESTOR → debajo el gestor). Empareja cada título con SU casilla, no con la de al lado.
