@@ -59,3 +59,9 @@ La clave *anon* puede ser pública: los datos están protegidos por las reglas R
 
 ## Protección de datos
 Guardas datos personales de asegurados. Ten en cuenta el RGPD: usa contraseñas fuertes, da de baja a quien deje el equipo (borrándolo de *Users*) y borra partes antiguos cuando ya no los necesites.
+
+
+---
+
+© 2026 Alfonso Carrascosa Martínez. Todos los derechos reservados.
+Idea original: José Carlos Carrascosa Martínez.
