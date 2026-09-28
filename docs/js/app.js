@@ -34,6 +34,7 @@ async function cargarAjustes() {
     if (a.PRECIOS_IA && typeof a.PRECIOS_IA === "object") CFG.PRECIOS_IA = a.PRECIOS_IA;
     if (a.DIAS_COBRO) CFG.DIAS_COBRO = Number(a.DIAS_COBRO);
     if (a.IVA_FACTURA != null && a.IVA_FACTURA !== "") CFG.IVA_FACTURA = Number(a.IVA_FACTURA);
+    if (a.ULTIMA_COPIA) CFG.ULTIMA_COPIA = a.ULTIMA_COPIA;
     ajustesCargados = true;
   } catch { /* se usan los valores de config.js */ }
 }
@@ -372,6 +373,7 @@ function sheetFiltros() {
 }
 
 // ------------------------------------------------------------------ Resumen de pendientes
+const DIAS_COPIA = 7;   // aviso de copia de seguridad cada semana
 function datosResumen() {
   const ps = S.partes || [];
   const cuenta = (k, v) => ps.filter((p) => FILTROS_EXTRA[k].fn(p, v)).length;
@@ -384,6 +386,12 @@ function datosResumen() {
     { k: "falta", v: "autorizar", t: "⏳ Valorados sin respuesta (más de 7 días)", n: cuenta("falta", "autorizar"), aviso: true },
     { k: "falta", v: "terminar", t: "🔧 Autorizados pendientes de hacer", n: cuenta("falta", "terminar"), aviso: false },
     { k: "dias", v: "30", t: "🔴 Atascados (más de 30 días)", n: ps.filter((p) => p.estado !== "realizado" && diasParte(p) > 30).length, aviso: true },
+    ...((S.yo?.es_admin || api.modo !== "supabase") && ps.length ? (() => {
+      const ult = CFG.ULTIMA_COPIA || sessionGet("ultimaCopia");
+      const dias = ult ? Math.floor((Date.now() - new Date(ult)) / 864e5) : null;
+      const toca = dias == null || dias >= DIAS_COPIA;
+      return [{ accion: copiaSeguridad, t: `💾 Copia de seguridad: ${ult ? (dias === 0 ? "hecha hoy" : `última hace ${dias} día${dias === 1 ? "" : "s"}`) : "nunca hecha"}${toca ? " · pulsa para descargarla" : ""}`, n: toca ? 1 : 0, aviso: toca }];
+    })() : []),
     ...(verPrecios() && (S.yo?.es_admin || api.modo !== "supabase") ? (() => {
       const f = datosFacturacion();
       return [
@@ -393,10 +401,11 @@ function datosResumen() {
     })() : []),
   ];
 }
-function sheetResumen(forzar) {
+function sheetResumen(forzar, soloContador) {
   const d = datosResumen();
   const avisos = d.filter((x) => x.aviso).reduce((a, x) => a + x.n, 0);
   const b = $("#nResumen"); if (b) b.textContent = avisos ? String(avisos) : "";
+  if (soloContador) return;
   const hoy = new Date().toISOString().slice(0, 10);
   if (!forzar && (sessionGet("resumen") === hoy || !d.some((x) => x.n))) return;
   sessionSet("resumen", hoy);
@@ -410,6 +419,7 @@ function sheetResumen(forzar) {
   $$(".res-fila", s).forEach((el) => el.addEventListener("click", () => {
     const x = d[el.dataset.i];
     if (x.ir) { cerrarSheet(); location.hash = x.ir; return; }
+    if (x.accion) { cerrarSheet(); x.accion(); return; }
     if (x.k === "dias") { S.fx = { dias: "30" }; S.filtro = "activos"; }
     else { S.fx = { [x.k]: x.v }; S.filtro = "todos"; }
     S.filtroZona = ""; sessionSet("filtroZona", ""); sessionSet("filtro", S.filtro); guardarFx();
@@ -507,8 +517,15 @@ async function copiaSeguridad() {
       XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(hojaHist.length ? hojaHist : [{ Info: "Sin historial" }]), "Historial");
       const out = XLSX.write(wb, { bookType: "xlsx", type: "array" });
       descargar(new Blob([out], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }), `copia_partes_${new Date().toISOString().slice(0, 10)}.xlsx`);
-      sessionSet("ultimaCopia", new Date().toISOString());
+      const ahora = new Date().toISOString();
+      sessionSet("ultimaCopia", ahora);
+      CFG.ULTIMA_COPIA = ahora;
+      // Se apunta en los ajustes compartidos para que el aviso valga para todos los móviles
+      if (S.yo?.es_admin || api.modo !== "supabase") {
+        try { const a = await api.leerAjustes(); await api.guardarAjustes({ ...a, ULTIMA_COPIA: ahora }); } catch { /* no pasa nada */ }
+      }
     });
+    sheetResumen(false, true);
     toast("Copia descargada", "ok");
   } catch { /* conCarga avisa */ }
 }
@@ -2317,7 +2334,7 @@ async function vistaAjustes() {
     <section class="tarjeta">
       <h3>Copia de seguridad</h3>
       <button type="button" class="btn ancho" id="btnCopia">💾 Descargar copia en Excel</button>
-      <p class="suave">Todos los partes (también los de la papelera), las líneas de valoración y el historial. ${sessionGet("ultimaCopia") ? "Última copia desde este móvil: " + fFecha(sessionGet("ultimaCopia")) + "." : "Aún no has descargado ninguna desde este móvil."} Recomendable una vez al mes.</p>
+      <p class="suave">Todos los partes (también los de la papelera), las líneas de valoración y el historial. ${CFG.ULTIMA_COPIA || sessionGet("ultimaCopia") ? "Última copia: " + fFecha(CFG.ULTIMA_COPIA || sessionGet("ultimaCopia")) + "." : "Aún no se ha descargado ninguna."} Hazla una vez a la semana: si pasan ${DIAS_COPIA} días, la campana 🔔 te lo recuerda.</p>
     </section>
     <section class="tarjeta">
       <h3>Zonas</h3>
@@ -2370,6 +2387,7 @@ async function vistaAjustes() {
       }),
     };
     if (!datos.ASEGURADORAS.includes("Otra")) datos.ASEGURADORAS.push("Otra");
+    if (CFG.ULTIMA_COPIA) datos.ULTIMA_COPIA = CFG.ULTIMA_COPIA;
     await conCarga("Guardando…", () => api.guardarAjustes(datos));
     ajustesCargados = false; await cargarAjustes();
     toast("Ajustes guardados", "ok");
