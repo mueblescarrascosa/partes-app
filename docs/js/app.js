@@ -108,6 +108,7 @@ async function router() {
   if (api.modo === "supabase" && !S.yo?.nombre) return vistaSinAcceso();
   document.body.classList.toggle("sin-precios", !verPrecios());
   const [, ruta, id] = h.split("/");
+  document.body.dataset.vista = ruta || "lista";
   window.scrollTo(0, 0);
   if (!ruta) return vistaLista();
   if (ruta === "nuevo") return vistaFormulario(null);
