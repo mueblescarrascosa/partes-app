@@ -630,9 +630,10 @@ async function vistaFacturacion() {
         <div class="fact-total"><span>${elegidos.length} seleccionados${sinImporte ? ` · <b class="rojo">${sinImporte} sin importe</b>` : ""}</span>
           <div class="fact-desglose"><span>Base imponible</span><b>${fEuros(total)}</b><span>IVA ${IVA_FACT()}%</span><b>${fEuros(conIVA(total).iva)}</b><span>Total factura</span><b class="grande">${fEuros(conIVA(total).total)}</b></div></div>
         <div class="lista-botones">
-          <button class="btn grande" id="fPDF" ${elegidos.length ? "" : "disabled"}>${I.pdf}<span><b>Relación en PDF</b><small>Para mandar a ${esc(DEST.nombre)} con la factura</small></span></button>
+          <button class="btn primario grande" id="fEnviar" style="--c:#16a34a" ${elegidos.some((p) => !p.factura_ref) ? "" : "disabled"}>${I.wa}<span><b>Enviar relación y marcar facturado</b><small>Te pide el nº de factura, manda el PDF a ${esc(DEST.nombre)} y cuenta ${DIAS_COBRO()} días para el cobro</small></span></button>
+          <button class="btn grande" id="fPDF" ${elegidos.length ? "" : "disabled"}>${I.pdf}<span><b>Solo el PDF</b><small>Ver o descargar sin marcar nada</small></span></button>
           <button class="btn grande" id="fXLS" ${elegidos.length ? "" : "disabled"}>📊<span><b>Relación en Excel</b></span></button>
-          <button class="btn primario grande" id="fMarcar" ${elegidos.some((p) => !p.factura_ref) ? "" : "disabled"}>✅<span><b>Marcar como facturados</b><small>Te pide el nº de factura. Cobro previsto a ${DIAS_COBRO()} días</small></span></button>
+          <button class="btn texto ancho" id="fMarcar" ${elegidos.some((p) => !p.factura_ref) ? "" : "disabled"}>Solo marcar como facturados (sin enviar)</button>
         </div>` : '<p class="suave">No hay partes terminados en este mes. Un parte cuenta aquí cuando lo marcas como <b>Realizado</b>.</p>'}
       </section>
       <section class="tarjeta">
@@ -650,15 +651,39 @@ async function vistaFacturacion() {
     $$("#fact .fact-fila input").forEach((c) => c.onchange = () => { c.checked ? sel.add(c.dataset.id) : sel.delete(c.dataset.id); pinta(); });
     const filasExp = () => elegidos.map((p) => ({ ...p, importe: importeParte(p) || 0,
       trabajo: ((p.lineas_realizadas || []).length ? p.lineas_realizadas : (p.lineas_valoracion || [])).map((l) => `${l.codigo || ""} ${l.descripcion || ""}`.trim()).join("; ") || (p.averia || "").slice(0, 90) }));
-    $("#fPDF")?.addEventListener("click", async () => {
+    // Genera el PDF y lo comparte (o descarga). Devuelve true si se ha enviado/descargado.
+    const enviarPDFRelacion = async (ref) => {
+      const blob = await conCarga("Generando PDF…", async () => (await cargarPDF()).generarRelacion(filasExp(),
+        `RELACIÓN DE TRABAJOS · ${nombreMes(mes).toUpperCase()}${ref ? " · FRA. " + ref : ""}`, DEST.nombre, IVA_FACT()));
+      const nombre = `Relacion_${mes}_${(DEST.nombre || "").replace(/\W+/g, "")}.pdf`;
+      const file = new File([blob], nombre, { type: "application/pdf" });
+      if (navigator.canShare?.({ files: [file] })) {
+        try { await navigator.share({ files: [file], title: nombre }); return true; }
+        catch (e) { if (e.name === "AbortError") return false; }
+      }
+      descargar(blob, nombre); return true;
+    };
+    const pedirFactura = (aMarcar) => {
+      const sinImp = aMarcar.filter((p) => importeParte(p) == null);
+      if (sinImp.length && !confirm(`${sinImp.length} parte(s) no tienen importe (${sinImp.map((p) => p.nombre || p.expediente).join(", ")}). ¿Facturarlos igualmente a 0 €?`)) return null;
+      const ref = prompt(`Nº de factura para ${aMarcar.length} parte(s) (${fEuros(conIVA(aMarcar.reduce((a, p) => a + (importeParte(p) || 0), 0)).total)} IVA incl.):`, `${mes}`);
+      return ref && ref.trim() ? ref.trim() : null;
+    };
+    const marcarFacturados = async (aMarcar, ref) => {
+      const fecha = new Date().toLocaleDateString("sv-SE");
+      await conCarga("Guardando…", async () => { for (const p of aMarcar) { await api.actualizarParte(p.id, { factura_ref: ref, facturado_at: fecha, cobrado_at: null }); Object.assign(p, { factura_ref: ref, facturado_at: fecha, cobrado_at: null }); } });
+      toast(`Factura ${ref} anotada. Cobro previsto: ${fFecha(sumarDias(fecha, DIAS_COBRO()))}`, "ok"); sel.clear(); pinta();
+    };
+    $("#fEnviar")?.addEventListener("click", async () => {
+      const aMarcar = elegidos.filter((p) => !p.factura_ref);
+      const ref = pedirFactura(aMarcar); if (!ref) return;
       try {
-        const blob = await conCarga("Generando PDF…", async () => (await cargarPDF()).generarRelacion(filasExp(), `RELACIÓN DE TRABAJOS · ${nombreMes(mes).toUpperCase()}`, DEST.nombre, IVA_FACT()));
-        const nombre = `Relacion_${mes}_${(DEST.nombre || "").replace(/\W+/g, "")}.pdf`;
-        const file = new File([blob], nombre, { type: "application/pdf" });
-        if (navigator.canShare?.({ files: [file] })) { try { await navigator.share({ files: [file], title: nombre }); return; } catch (e) { if (e.name === "AbortError") return; } }
-        descargar(blob, nombre);
+        const ok = await enviarPDFRelacion(ref);
+        if (!ok && !confirm("No se ha enviado el PDF. ¿Marcar igualmente los partes como facturados?")) return;
+        await marcarFacturados(aMarcar, ref);
       } catch { /* conCarga avisa */ }
     });
+    $("#fPDF")?.addEventListener("click", async () => { try { await enviarPDFRelacion(null); } catch { /* conCarga avisa */ } });
     $("#fXLS")?.addEventListener("click", async () => {
       try {
         await conCarga("Generando Excel…", async () => {
@@ -674,15 +699,8 @@ async function vistaFacturacion() {
     });
     $("#fMarcar")?.addEventListener("click", async () => {
       const aMarcar = elegidos.filter((p) => !p.factura_ref);
-      const sinImp = aMarcar.filter((p) => importeParte(p) == null);
-      if (sinImp.length && !confirm(`${sinImp.length} parte(s) no tienen importe (${sinImp.map((p) => p.nombre || p.expediente).join(", ")}). ¿Facturarlos igualmente a 0 €?`)) return;
-      const ref = prompt(`Nº de factura o nota para ${aMarcar.length} parte(s) (${fEuros(conIVA(aMarcar.reduce((a, p) => a + (importeParte(p) || 0), 0)).total)} IVA incl.):`, `${mes}`);
-      if (!ref || !ref.trim()) return;
-      const fecha = new Date().toLocaleDateString("sv-SE");
-      try {
-        await conCarga("Guardando…", async () => { for (const p of aMarcar) { await api.actualizarParte(p.id, { factura_ref: ref.trim(), facturado_at: fecha, cobrado_at: null }); Object.assign(p, { factura_ref: ref.trim(), facturado_at: fecha, cobrado_at: null }); } });
-        toast(`Factura ${ref.trim()} anotada. Cobro previsto: ${fFecha(sumarDias(fecha, DIAS_COBRO()))}`, "ok"); sel.clear(); pinta();
-      } catch { /* conCarga avisa */ }
+      const ref = pedirFactura(aMarcar); if (!ref) return;
+      try { await marcarFacturados(aMarcar, ref); } catch { /* conCarga avisa */ }
     });
     const cambiarCobro = async (clave, valor) => {
       const [ref, fecha] = clave.split("|");
