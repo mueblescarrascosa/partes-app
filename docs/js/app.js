@@ -1510,6 +1510,7 @@ async function vistaParte(id) {
       <a class="accion ${p.telefono ? "" : "off"}" href="${p.telefono ? linkLlamar(p.telefono) : "#"}">${I.phone}<span>Llamar</span></a>
       <a class="accion wa ${p.telefono ? "" : "off"}" href="${p.telefono ? linkWhatsApp(p.telefono, msgCliente) : "#"}" target="_blank" rel="noopener">${I.wa}<span>WhatsApp</span></a>
       <a class="accion ${dirCompleta ? "" : "off"}" href="${dirCompleta ? linkMapa(p) : "#"}" target="_blank" rel="noopener">${I.map}<span>Cómo llegar</span></a>
+      <button class="accion ${p.telefono ? "" : "off"}" id="aContacto">${I.user}<span>Contacto</span></button>
     </div>
     ${p.telefono2 ? `<div class="tel2">Tel. 2: <a href="${linkLlamar(p.telefono2)}">llamar</a> · <a href="${linkWhatsApp(p.telefono2, msgCliente)}" target="_blank" rel="noopener">WhatsApp</a></div>` : ""}
   </section>
@@ -1579,6 +1580,7 @@ async function vistaParte(id) {
 
   $("#volver").onclick = () => (location.hash = "/");
   $("#menuParte").onclick = () => menuParte(p);
+  $("#aContacto").onclick = () => guardarContacto(p);
   $("#avanzar")?.addEventListener("click", () => sheetFase(p, sig.id));
   $("#informe")?.addEventListener("click", () => flujoInforme(p));
   $("#nota").onclick = () => sheetFase(p, null);
@@ -1680,6 +1682,31 @@ function sheetFotos(p) {
     finally { cargando(false); vistaParte(p.id); }
   };
   $("#fCam", s).onchange = alElegir; $("#fGal", s).onchange = alElegir;
+}
+
+// Tarjeta de contacto (.vcf): nombre, teléfono, dirección, expediente y descripción. Nada más.
+function vcardParte(p) {
+  const e = (t) => String(t ?? "").replace(/\\/g, "\\\\").replace(/\r?\n/g, "\\n").replace(/([,;])/g, "\\$1");
+  const nombre = (p.nombre || "Cliente").trim();
+  const L = ["BEGIN:VCARD", "VERSION:3.0", `FN:${e(nombre)}`, `N:;${e(nombre)};;;`];
+  for (const t of [p.telefono, p.telefono2].filter(Boolean)) L.push(`TEL;TYPE=CELL:${String(t).replace(/\s/g, "")}`);
+  if (p.direccion || p.poblacion) L.push(`ADR;TYPE=HOME:;;${e(p.direccion)};${e(p.poblacion)};${e(p.provincia)};${e(p.codigo_postal)};`);
+  const nota = [p.expediente ? `Exp. ${p.expediente}` : "", p.averia || ""].filter(Boolean).join("\n");
+  if (nota) L.push(`NOTE:${e(nota)}`);
+  L.push("END:VCARD");
+  return L.join("\r\n") + "\r\n";
+}
+
+async function guardarContacto(p) {
+  if (!p.telefono) return toast("Este parte no tiene teléfono", "error");
+  const nombreArch = `${(p.nombre || "cliente").replace(/[^\wÀ-ÿ ]+/g, "").trim().replace(/\s+/g, "_") || "cliente"}.vcf`;
+  const file = new File([vcardParte(p)], nombreArch, { type: "text/vcard" });
+  if (navigator.canShare && navigator.canShare({ files: [file] })) {
+    try { await navigator.share({ files: [file], title: p.nombre || "Contacto" }); return; }
+    catch (e) { if (e.name === "AbortError") return; }
+  }
+  descargar(file, nombreArch);
+  toast("Contacto descargado: ábrelo para guardarlo en Contactos", "ok");
 }
 
 function menuParte(p) {
