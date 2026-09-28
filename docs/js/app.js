@@ -25,6 +25,7 @@ async function cargarAjustes() {
     if (Array.isArray(a.ZONAS)) CFG.ZONAS = a.ZONAS;
     if (a.PRECIOS_IA && typeof a.PRECIOS_IA === "object") CFG.PRECIOS_IA = a.PRECIOS_IA;
     if (a.DIAS_COBRO) CFG.DIAS_COBRO = Number(a.DIAS_COBRO);
+    if (a.IVA_FACTURA != null && a.IVA_FACTURA !== "") CFG.IVA_FACTURA = Number(a.IVA_FACTURA);
     ajustesCargados = true;
   } catch { /* se usan los valores de config.js */ }
 }
@@ -560,6 +561,8 @@ async function cargarXLSX() {
 
 // ------------------------------------------------------------------ Facturación mensual
 const DIAS_COBRO = () => Number(CFG.DIAS_COBRO ?? 60);
+const IVA_FACT = () => Number(CFG.IVA_FACTURA ?? 21);
+const conIVA = (base) => { const iva = Math.round(base * IVA_FACT()) / 100; return { base, iva, total: Math.round((base + iva) * 100) / 100 }; };
 function importeParte(p) {
   if ((p.lineas_realizadas || []).length) return totalesLineas(p.lineas_realizadas, 0).base;
   if (p.importe_autorizado != null) return Number(p.importe_autorizado);
@@ -582,7 +585,7 @@ function datosFacturacion() {
     facturas.get(k).partes.push(p);
   }
   const hoy = new Date(); hoy.setHours(0, 0, 0, 0);
-  const lista = [...facturas.values()].map((f) => ({ ...f, total: f.partes.reduce((a, p) => a + (importeParte(p) || 0), 0),
+  const lista = [...facturas.values()].map((f) => ({ ...f, total: conIVA(f.partes.reduce((a, p) => a + (importeParte(p) || 0), 0)).total,
     vence: f.fecha ? sumarDias(f.fecha, DIAS_COBRO()) : null, cobrado: f.partes.every((p) => p.cobrado_at) ? f.partes[0].cobrado_at : null }))
     .map((f) => ({ ...f, dias: f.vence ? Math.floor((f.vence - hoy) / 864e5) : null }))
     .sort((a, b) => (b.fecha || "").localeCompare(a.fecha || ""));
@@ -624,7 +627,8 @@ async function vistaFacturacion() {
             <span class="fact-info"><b>${esc(p.nombre || "Sin nombre")}</b><small>${fFecha(p.realizado_at)} · ${esc(p.aseguradora || "")} ${esc(p.expediente || "")}${p.poblacion ? " · " + esc(p.poblacion) : ""}</small>${est}</span>
             <b class="fact-imp ${imp == null ? "sin" : ""}">${imp == null ? "sin importe" : fEuros(imp)}</b></label>`;
         }).join("")}</div>
-        <div class="fact-total"><span>${elegidos.length} seleccionados${sinImporte ? ` · <b class="rojo">${sinImporte} sin importe</b>` : ""}</span><b>${fEuros(total)} <small>sin IVA</small></b></div>
+        <div class="fact-total"><span>${elegidos.length} seleccionados${sinImporte ? ` · <b class="rojo">${sinImporte} sin importe</b>` : ""}</span>
+          <div class="fact-desglose"><span>Base imponible</span><b>${fEuros(total)}</b><span>IVA ${IVA_FACT()}%</span><b>${fEuros(conIVA(total).iva)}</b><span>Total factura</span><b class="grande">${fEuros(conIVA(total).total)}</b></div></div>
         <div class="lista-botones">
           <button class="btn grande" id="fPDF" ${elegidos.length ? "" : "disabled"}>${I.pdf}<span><b>Relación en PDF</b><small>Para mandar a ${esc(DEST.nombre)} con la factura</small></span></button>
           <button class="btn grande" id="fXLS" ${elegidos.length ? "" : "disabled"}>📊<span><b>Relación en Excel</b></span></button>
@@ -632,14 +636,14 @@ async function vistaFacturacion() {
         </div>` : '<p class="suave">No hay partes terminados en este mes. Un parte cuenta aquí cuando lo marcas como <b>Realizado</b>.</p>'}
       </section>
       <section class="tarjeta">
-        <div class="h3-fila"><h3>Pendiente de cobro</h3><b>${fEuros(pendTotal)}</b></div>
+        <div class="h3-fila"><h3>Pendiente de cobro</h3><b>${fEuros(pendTotal)} <small>IVA incl.</small></b></div>
         ${pendientes.length ? pendientes.map((f) => `
           <div class="factura ${f.dias != null && f.dias < 0 ? "vencida" : ""}">
-            <div><b>Factura ${esc(f.ref)}</b><small>${f.fecha ? fFecha(f.fecha) : ""} · ${f.partes.length} partes · ${fEuros(f.total)}</small>
+            <div><b>Factura ${esc(f.ref)}</b><small>${f.fecha ? fFecha(f.fecha) : ""} · ${f.partes.length} partes · ${fEuros(f.total)} (IVA incl.)</small>
               <small>${f.vence ? (f.dias < 0 ? `⚠️ Vencida hace ${-f.dias} días (${fFecha(f.vence)})` : `Cobro previsto ${fFecha(f.vence)} · en ${f.dias} días`) : ""}</small></div>
             <button class="btn peq" data-cobrar="${esc(f.ref)}|${esc(f.fecha || "")}">Cobrada</button>
           </div>`).join("") : '<p class="suave">Nada pendiente de cobro.</p>'}
-        ${facturas.filter((f) => f.cobrado).slice(0, 5).map((f) => `<div class="factura cobrada"><div><b>Factura ${esc(f.ref)}</b><small>${fEuros(f.total)} · cobrada ${fFecha(f.cobrado)}</small></div>
+        ${facturas.filter((f) => f.cobrado).slice(0, 5).map((f) => `<div class="factura cobrada"><div><b>Factura ${esc(f.ref)}</b><small>${fEuros(f.total)} IVA incl. · cobrada ${fFecha(f.cobrado)}</small></div>
           <button class="btn peq texto" data-descobrar="${esc(f.ref)}|${esc(f.fecha || "")}">Deshacer</button></div>`).join("")}
       </section>`;
     $("#fMes").onchange = (e) => { mes = e.target.value; sessionSet("factMes", mes); sel.clear(); pinta(); };
@@ -648,7 +652,7 @@ async function vistaFacturacion() {
       trabajo: ((p.lineas_realizadas || []).length ? p.lineas_realizadas : (p.lineas_valoracion || [])).map((l) => `${l.codigo || ""} ${l.descripcion || ""}`.trim()).join("; ") || (p.averia || "").slice(0, 90) }));
     $("#fPDF")?.addEventListener("click", async () => {
       try {
-        const blob = await conCarga("Generando PDF…", async () => (await cargarPDF()).generarRelacion(filasExp(), `RELACIÓN DE TRABAJOS · ${nombreMes(mes).toUpperCase()}`, DEST.nombre));
+        const blob = await conCarga("Generando PDF…", async () => (await cargarPDF()).generarRelacion(filasExp(), `RELACIÓN DE TRABAJOS · ${nombreMes(mes).toUpperCase()}`, DEST.nombre, IVA_FACT()));
         const nombre = `Relacion_${mes}_${(DEST.nombre || "").replace(/\W+/g, "")}.pdf`;
         const file = new File([blob], nombre, { type: "application/pdf" });
         if (navigator.canShare?.({ files: [file] })) { try { await navigator.share({ files: [file], title: nombre }); return; } catch (e) { if (e.name === "AbortError") return; } }
@@ -661,7 +665,8 @@ async function vistaFacturacion() {
           await cargarXLSX();
           const filas = filasExp().map((p) => ({ Terminado: fFecha(p.realizado_at), Aseguradora: p.aseguradora, Expediente: p.expediente, Encargo: p.num_encargo,
             Cliente: p.nombre, Población: p.poblacion, Trabajo: p.trabajo, "Importe sin IVA (€)": p.importe, Factura: p.factura_ref || "" }));
-          filas.push({ Cliente: "TOTAL", "Importe sin IVA (€)": filas.reduce((a, f) => a + (f["Importe sin IVA (€)"] || 0), 0) });
+          const t = conIVA(filas.reduce((a, f) => a + (f["Importe sin IVA (€)"] || 0), 0));
+          filas.push({}, { Trabajo: "Base imponible", "Importe sin IVA (€)": t.base }, { Trabajo: `IVA ${IVA_FACT()}%`, "Importe sin IVA (€)": t.iva }, { Trabajo: "TOTAL", "Importe sin IVA (€)": t.total });
           const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(filas), nombreMes(mes).slice(0, 30));
           descargar(new Blob([XLSX.write(wb, { bookType: "xlsx", type: "array" })], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }), `Relacion_${mes}.xlsx`);
         });
@@ -671,7 +676,7 @@ async function vistaFacturacion() {
       const aMarcar = elegidos.filter((p) => !p.factura_ref);
       const sinImp = aMarcar.filter((p) => importeParte(p) == null);
       if (sinImp.length && !confirm(`${sinImp.length} parte(s) no tienen importe (${sinImp.map((p) => p.nombre || p.expediente).join(", ")}). ¿Facturarlos igualmente a 0 €?`)) return;
-      const ref = prompt(`Nº de factura o nota para ${aMarcar.length} parte(s) (${fEuros(aMarcar.reduce((a, p) => a + (importeParte(p) || 0), 0))}):`, `${mes}`);
+      const ref = prompt(`Nº de factura o nota para ${aMarcar.length} parte(s) (${fEuros(conIVA(aMarcar.reduce((a, p) => a + (importeParte(p) || 0), 0)).total)} IVA incl.):`, `${mes}`);
       if (!ref || !ref.trim()) return;
       const fecha = new Date().toLocaleDateString("sv-SE");
       try {
@@ -2130,7 +2135,8 @@ async function vistaAjustes() {
     <section class="tarjeta">
       <h3>A quién se envían los PDF</h3>
       <div class="dos"><label>Nombre<input name="d_nombre" value="${esc(D.nombre)}"></label><label>WhatsApp<input name="d_telefono" type="tel" value="${esc(D.telefono)}"></label></div>
-      <label>Días que tarda en pagar las facturas<input name="dias_cobro" type="number" min="0" step="1" value="${CFG.DIAS_COBRO ?? 60}"></label>
+      <div class="dos"><label>Días que tarda en pagar<input name="dias_cobro" type="number" min="0" step="1" value="${CFG.DIAS_COBRO ?? 60}"></label>
+        <label>IVA de la factura mensual (%)<input name="iva_factura" type="number" min="0" step="1" value="${CFG.IVA_FACTURA ?? 21}"></label></div>
     </section>
     <section class="tarjeta">
       <h3>Tarifa de precios</h3>
@@ -2189,6 +2195,7 @@ async function vistaAjustes() {
       EMPRESA: { nombre: f.e_nombre.trim(), cif: f.e_cif.trim(), telefono: f.e_telefono.trim(), email: f.e_email.trim(), direccion: f.e_direccion.trim() },
       DESTINO_INFORMES: { nombre: f.d_nombre.trim(), telefono: f.d_telefono.replace(/\s/g, "") },
       DIAS_COBRO: Number(f.dias_cobro) || 60,
+      IVA_FACTURA: f.iva_factura === "" ? 21 : Number(f.iva_factura),
       ASEGURADORAS: f.aseguradoras.split("\n").map((x) => x.trim()).filter(Boolean),
       MENSAJE_CLIENTE: f.mensaje.trim(),
       IVA: Number(f.iva) || 0,

@@ -220,7 +220,7 @@ export async function generarInforme(parte, api, miembros = [], opc = {}) {
 }
 
 // ---- Relación mensual de trabajos terminados (para facturar a MULTIBETT)
-export function generarRelacion(filas, titulo, destino = "") {
+export function generarRelacion(filas, titulo, destino = "", ivaPct = 0) {
   const { jsPDF } = window.jspdf;
   const E = window.APP_CONFIG.EMPRESA;
   const doc = new jsPDF({ unit: "mm", format: "a4", orientation: "landscape" });
@@ -261,8 +261,17 @@ export function generarRelacion(filas, titulo, destino = "") {
     total += Number(f.importe) || 0;
     fila([fFecha(f.realizado_at), f.aseguradora, f.expediente, f.num_encargo, f.nombre, f.poblacion, f.trabajo, fEuros(f.importe)]);
   }
-  y += 3; doc.setFont("helvetica", "bold"); doc.setFontSize(11);
-  doc.text(`${filas.length} trabajos  ·  TOTAL (sin IVA): ${fEuros(total)}`, W - M, y, { align: "right" });
+  if (y + 26 > ALTO - 14) { doc.addPage(); cab(); }
+  const iva = Math.round(total * ivaPct) / 100;
+  const filaT = (k, v, negrita) => {
+    doc.setFont("helvetica", negrita ? "bold" : "normal"); doc.setFontSize(negrita ? 11 : 9.5);
+    doc.text(k, W - M - 40, y, { align: "right" }); doc.text(v, W - M, y, { align: "right" }); y += negrita ? 6 : 5;
+  };
+  y += 3;
+  doc.setFont("helvetica", "normal"); doc.setFontSize(9); doc.text(`${filas.length} trabajos`, M, y);
+  filaT("Base imponible", fEuros(total));
+  if (ivaPct) { filaT(`IVA ${ivaPct}%`, fEuros(iva)); doc.setDrawColor(148, 163, 184); doc.line(W - M - 75, y - 3.5, W - M, y - 3.5); filaT("TOTAL", fEuros(total + iva), true); }
+  else filaT("TOTAL (sin IVA)", fEuros(total), true);
   const n = doc.getNumberOfPages();
   for (let i = 1; i <= n; i++) { doc.setPage(i); doc.setFontSize(7.5); doc.setTextColor(150); doc.text(`Página ${i} de ${n}`, W - M, ALTO - 6, { align: "right" }); }
   return doc.output("blob");

@@ -39,6 +39,9 @@ window.APP_CONFIG = {
   // Días que tarda MULTIBETT en pagar las facturas
   DIAS_COBRO: 60,
 
+  // IVA de la factura mensual a MULTIBETT (%). Las valoraciones siguen sin IVA.
+  IVA_FACTURA: 21,
+
   // Tarifas de la IA en $ por millón de tokens [entrada, salida] (editables en Ajustes)
   PRECIOS_IA: { "claude-sonnet-4-5": [3, 15], "claude-haiku-4-5": [1, 5] },
 
