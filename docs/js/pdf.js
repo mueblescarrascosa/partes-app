@@ -258,30 +258,37 @@ export function generarRelacion(filas, titulo, destino = "", ivaPct = 0) {
   };
   const cols = [
     { t: "Terminado", w: 19 }, { t: "Aseguradora", w: 24 }, { t: "Expediente", w: 25 }, { t: "Encargo", w: 19 },
-    { t: "Cliente", w: 38 }, { t: "Dirección / Población", w: 48 }, { t: "Código", w: 16 }, { t: "Trabajo", w: 64 }, { t: "Importe", w: 20, r: true },
+    { t: "Cliente", w: 38 }, { t: "Dirección / Población", w: 48 }, { t: "Código", w: 15 }, { t: "Trabajo", w: 48 }, { t: "Precio", w: 17, r: true }, { t: "Total parte", w: 20, r: true },
   ];
-  const IC = 6, IT = 7;   // columnas de código y trabajo: una línea por código
+  const IC = 6, IT = 7, IP = 8;   // código, trabajo y precio: un renglón por código
   const xs = []; let xx = M; cols.forEach((c) => { xs.push(xx); xx += c.w; });
   // vals[IC] y vals[IT] pueden ser listas: cada código va en su propio renglón, alineado con su descripción
   const fila = (vals, negrita) => {
     doc.setFont("helvetica", negrita ? "bold" : "normal"); doc.setFontSize(8);
     const LH = 3.6;
     const partir = (v, i) => doc.splitTextToSize(String(v ?? ""), cols[i].w - 2);
-    const partes = vals.map((v, i) => (i === IC || i === IT) ? null : partir(v, i));
-    const cods = Array.isArray(vals[IC]) ? vals[IC] : [vals[IC]];
-    const trabs = Array.isArray(vals[IT]) ? vals[IT] : [vals[IT]];
-    const sub = cods.map((c, k) => { const a = partir(c, IC), b = partir(trabs[k], IT); return { a, b, n: Math.max(a.length, b.length, 1) }; });
+    const sube = (i) => i === IC || i === IT || i === IP;
+    const partes = vals.map((v, i) => sube(i) ? null : partir(v, i));
+    const lista = (v) => (Array.isArray(v) ? v : [v]);
+    const cods = lista(vals[IC]), trabs = lista(vals[IT]), precs = lista(vals[IP]);
+    const sub = cods.map((c, k) => { const a = partir(c, IC), b = partir(trabs[k], IT); return { a, b, pr: String(precs[k] ?? ""), n: Math.max(a.length, b.length, 1) }; });
     const nSub = sub.reduce((t, x) => t + x.n, 0);
     const h = Math.max(nSub, ...partes.filter(Boolean).map((p) => p.length)) * LH + 2 + (sub.length - 1) * 1;
     if (y + h > ALTO - 14) { doc.addPage(); cab(); cabecera(); }
-    partes.forEach((p, i) => { if (!p) return; cols[i].r ? doc.text(p, xs[i] + cols[i].w - 1, y, { align: "right" }) : doc.text(p, xs[i] + 1, y); });
+    partes.forEach((p, i) => {
+      if (!p) return;
+      if (i === vals.length - 1 && !negrita) doc.setFont("helvetica", "bold");
+      cols[i].r ? doc.text(p, xs[i] + cols[i].w - 1, y, { align: "right" }) : doc.text(p, xs[i] + 1, y);
+      doc.setFont("helvetica", negrita ? "bold" : "normal");
+    });
     let yy = y;
     sub.forEach((x, k) => {
-      if (k) { doc.setDrawColor(241, 245, 249); doc.line(xs[IC], yy - 2.8, xs[IT] + cols[IT].w, yy - 2.8); }
+      if (k) { doc.setDrawColor(241, 245, 249); doc.line(xs[IC], yy - 2.8, xs[IP] + cols[IP].w, yy - 2.8); }
       if (!negrita) doc.setFont("helvetica", "bold");
       doc.text(x.a, xs[IC] + 1, yy);
       doc.setFont("helvetica", negrita ? "bold" : "normal");
       doc.text(x.b, xs[IT] + 1, yy);
+      doc.text(x.pr, xs[IP] + cols[IP].w - 1, yy, { align: "right" });
       yy += x.n * LH + 1;
     });
     y += h; doc.setDrawColor(226, 232, 240); doc.line(M, y - 2.5, W - M, y - 2.5);
@@ -298,7 +305,9 @@ export function generarRelacion(filas, titulo, destino = "", ivaPct = 0) {
     const cant = (l) => (Number(l.cantidad) && Number(l.cantidad) !== 1 ? `${Number(l.cantidad).toLocaleString("es-ES")} × ` : "");
     const lugar = [f.direccion, [f.codigo_postal, f.poblacion].filter(Boolean).join(" ")].filter(Boolean).join("\n");
     fila([fFecha(f.realizado_at), f.aseguradora, f.expediente, f.num_encargo, f.nombre, lugar,
-      ls.map((l) => l.codigo || ""), ls.map((l) => cant(l) + (l.descripcion || "")), fEuros(f.importe)]);
+      ls.map((l) => l.codigo || ""),
+      ls.map((l) => cant(l) + (l.descripcion || "") + (cant(l) && l.precio != null ? ` (${fEuros(l.precio)}/ud.)` : "")),
+      ls.map((l) => (l.precio != null && l.precio !== "" ? fEuros(importeLinea(l)) : "")), fEuros(f.importe)]);
   }
   if (y + 26 > ALTO - 14) { doc.addPage(); cab(); }
   const iva = Math.round(total * ivaPct) / 100;
