@@ -73,18 +73,42 @@ const I = {
 };
 
 // ------------------------------------------------------------------ Sheet (panel inferior)
+// Las ventanas (hojas) ocupan una entrada del historial: el botón "atrás" del móvil cierra la ventana
+// en lugar de salir de la pantalla (y perder lo que hubiera detrás).
+let sheetEnHistorial = false;
+const quitarSheets = () => $$(".sheet-fondo").forEach((f) => f.remove());
 function abrirSheet(html) {
-  cerrarSheet();
+  quitarSheets();
   const fondo = document.createElement("div");
   fondo.className = "sheet-fondo";
   fondo.innerHTML = `<div class="sheet" role="dialog"><div class="sheet-asa"></div>${html}</div>`;
-  fondo.addEventListener("click", (e) => { if (e.target === fondo) cerrarSheet(); });
+  fondo.addEventListener("click", (e) => { if (e.target === fondo) cerrarSheetUsuario(); });
   document.body.appendChild(fondo);
   requestAnimationFrame(() => fondo.classList.add("abierto"));
-  $$("[data-cerrar]", fondo).forEach((b) => b.addEventListener("click", cerrarSheet));
+  $$("[data-cerrar]", fondo).forEach((b) => b.addEventListener("click", cerrarSheetUsuario));
+  if (!sheetEnHistorial) {
+    if (!history.state?.sheet) history.pushState({ sheet: 1 }, "");
+    sheetEnHistorial = true;
+  }
   return $(".sheet", fondo);
 }
-function cerrarSheet() { $$(".sheet-fondo").forEach((f) => f.remove()); }
+// Cierre desde el código (p. ej. antes de navegar): quita la ventana y, si no se navega a otro sitio, retira su entrada del historial
+function cerrarSheet() {
+  quitarSheets();
+  if (!sheetEnHistorial) return;
+  sheetEnHistorial = false;
+  const hash = location.hash;
+  setTimeout(() => { if (!sheetEnHistorial && history.state?.sheet && location.hash === hash) history.back(); }, 0);
+}
+// Cierre por el usuario (Cerrar, Cancelar, tocar fuera)
+function cerrarSheetUsuario() {
+  quitarSheets();
+  if (sheetEnHistorial) { sheetEnHistorial = false; history.back(); }
+}
+window.addEventListener("popstate", () => {
+  if (sheetEnHistorial) { sheetEnHistorial = false; quitarSheets(); return; }   // atrás con una ventana abierta: solo se cierra
+  if (history.state?.sheet && !$(".sheet-fondo")) history.back();              // entrada sobrante de una ventana ya cerrada
+});
 
 function cargando(on, texto = "Cargando…") {
   let c = $("#cargando");
@@ -200,6 +224,7 @@ async function vistaLista() {
     <button class="btn peq" id="btnFiltros">⚙️ Más filtros<b id="nFiltros"></b></button>
   </div>
   <div class="filtros-activos" id="fActivos"></div>
+  <div id="avisoLote"></div>
   <main id="lista" class="lista"><div class="vacio">Cargando…</div></main>
   <button class="fab" id="nuevo" aria-label="Nuevo parte">${I.plus}</button>`;
 
@@ -213,6 +238,7 @@ async function vistaLista() {
   $("#recargar").addEventListener("click", cargarPartes);
   $("#menuUsuario").addEventListener("click", menuUsuario);
   $("#btnInstalar")?.addEventListener("click", instalarApp);
+  avisoLotePendiente();
   await cargarPartes();
   if (S.saltarResumen) S.saltarResumen = false; else sheetResumen(false);
 }
@@ -1151,8 +1177,56 @@ const CAMPOS_PARTE = ["aseguradora", "expediente", "num_encargo", "num_siniestro
   "codigo_postal", "poblacion", "provincia", "telefono", "telefono2", "averia", "tramitador_nombre", "tramitador_telefono", "tramitador_email"];
 const MAX_LOTE = 20;
 
+// ---- La tanda en curso se guarda en el móvil (IndexedDB): si se sale sin querer o se cierra la app, se puede recuperar
+const loteDB = () => new Promise((res, rej) => {
+  const r = indexedDB.open("partes-lote", 1);
+  r.onupgradeneeded = () => r.result.createObjectStore("kv");
+  r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error);
+});
+async function loteIDB(modo, valor) {
+  try {
+    const db = await loteDB();
+    return await new Promise((res, rej) => {
+      const tx = db.transaction("kv", modo === "leer" ? "readonly" : "readwrite"), st = tx.objectStore("kv");
+      const r = modo === "leer" ? st.get("lote") : modo === "borrar" ? st.delete("lote") : st.put(valor, "lote");
+      r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error);
+    });
+  } catch (e) { console.warn("lote IDB", e); return null; }
+}
+let tGuardarLote;
+function persistirLote() {
+  clearTimeout(tGuardarLote);
+  tGuardarLote = setTimeout(() => {
+    const lote = S.lote;
+    if (!lote?.some((x) => ["ok", "pendiente", "leyendo", "error"].includes(x.estado))) { loteIDB("borrar"); return; }
+    loteIDB("guardar", { fecha: Date.now(), items: lote.map(({ avisos, ...x }) => x) });
+  }, 400);
+}
+const lotePendiente = (items) => (items || []).filter((x) => x.estado === "ok" && x.sel).length;
+async function recuperarLote() {
+  if (S.lote) return S.lote;
+  const g = await loteIDB("leer");
+  if (!g?.items?.length) return null;
+  if (Date.now() - g.fecha > 7 * 864e5) { loteIDB("borrar"); return null; }   // más de una semana: se descarta
+  S.lote = g.items.map((x) => (x.estado === "leyendo" ? { ...x, estado: "pendiente" } : x));
+  revisarLote();
+  return S.lote;
+}
+function descartarLote() { S.lote = null; S.antesDeSalir = null; loteIDB("borrar"); }
+async function avisoLotePendiente() {
+  const el = $("#avisoLote"); if (!el) return;
+  const lote = await recuperarLote();
+  const n = lotePendiente(lote), porLeer = (lote || []).filter((x) => x.estado === "pendiente").length;
+  if (!n && !porLeer) { el.innerHTML = ""; return; }
+  el.innerHTML = `<div class="aviso lote-pend">📥 Tienes una subida en masa sin terminar: <b>${n}</b> parte${n === 1 ? "" : "s"} leído${n === 1 ? "" : "s"} sin guardar${porLeer ? ` y ${porLeer} por leer` : ""}.
+    <div class="dos"><button class="btn peq" id="loteSeguir">Continuar</button><button class="btn peq texto" id="loteTirar">Descartar</button></div></div>`;
+  $("#loteSeguir").onclick = () => { location.hash = "/lote"; if (S.lote.some((x) => x.estado === "pendiente")) procesarLote(); };
+  $("#loteTirar").onclick = () => { if (confirm("¿Descartar esos partes leídos? Habría que volver a escanearlos.")) { descartarLote(); el.innerHTML = ""; } };
+}
+
 function iniciarLote(files) {
   if (files.length > MAX_LOTE) { toast(`Máximo ${MAX_LOTE} archivos por tanda. Se cogen los ${MAX_LOTE} primeros.`, "error"); files = files.slice(0, MAX_LOTE); }
+  if (lotePendiente(S.lote) && !confirm("Tienes otra subida en masa con partes leídos sin guardar. ¿Descartarla y empezar esta?")) return;
   S.lote = files.map((f, i) => ({ i, file: f, nombre: f.name, estado: "pendiente", sel: true }));
   if (location.hash === "#/lote") vistaLote(); else location.hash = "/lote";
   procesarLote();
@@ -1201,7 +1275,8 @@ function revisarLote() {
   }
 }
 
-function vistaLote() {
+async function vistaLote() {
+  if (!S.lote?.length) await recuperarLote();
   if (!S.lote?.length) { location.hash = "/"; return; }
   app.innerHTML = `
   <header class="barra">
@@ -1212,7 +1287,7 @@ function vistaLote() {
   <main id="loteLista" class="lote"></main>
   <div class="pie-form lote-pie"><button class="btn" id="loteCancelar">Descartar</button><button class="btn primario" id="loteGuardar">Guardar</button></div>`;
   S.antesDeSalir = () => !S.lote?.some((x) => x.estado === "ok" && x.sel) || confirm("Hay partes leídos sin guardar. ¿Salir y descartarlos?");
-  const salir = () => { if (!S.antesDeSalir()) return; S.antesDeSalir = null; S.lote = null; location.hash = "/"; };
+  const salir = () => { if (!S.antesDeSalir()) return; descartarLote(); location.hash = "/"; };
   $("#volver").onclick = salir;
   $("#loteCancelar").onclick = salir;
   $("#loteGuardar").onclick = guardarLote;
@@ -1220,6 +1295,7 @@ function vistaLote() {
 }
 
 function pintarLote() {
+  persistirLote();
   const cont = $("#loteLista"); if (!cont || !S.lote) return;
   const n = S.lote.length, hechos = S.lote.filter((x) => ["ok", "error", "guardado"].includes(x.estado)).length;
   const sel = S.lote.filter((x) => x.estado === "ok" && x.sel).length;
@@ -1303,7 +1379,7 @@ async function guardarLote() {
     } catch (e) { it.estado = "error"; it.error = e.message; fallos++; }
   }
   cargando(false);
-  if (!fallos) { S.lote = null; S.antesDeSalir = null; toast(`${ok} partes guardados`, "ok"); location.hash = "/"; }
+  if (!fallos) { descartarLote(); toast(`${ok} partes guardados`, "ok"); location.hash = "/"; }
   else { toast(`${ok} guardados, ${fallos} con problemas (revísalos)`, "error"); pintarLote(); }
 }
 
