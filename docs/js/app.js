@@ -40,6 +40,7 @@ function sessionSet(k, v) { try { localStorage.setItem("pa_" + k, v); } catch { 
 
 // ------------------------------------------------------------------ Iconos
 const I = {
+  home: '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V21h5v-6h4v6h5V9.5"/></svg>',
   cal: '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>',
   bell: '<svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 0 1-3.4 0"/></svg>',
   phone: '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.9v3a2 2 0 0 1-2.2 2 19.8 19.8 0 0 1-8.6-3.1 19.5 19.5 0 0 1-6-6A19.8 19.8 0 0 1 2.1 4.2 2 2 0 0 1 4.1 2h3a2 2 0 0 1 2 1.7c.1 1 .4 1.9.7 2.8a2 2 0 0 1-.5 2.1L8 9.9a16 16 0 0 0 6 6l1.3-1.3a2 2 0 0 1 2.1-.4c.9.3 1.8.6 2.8.7a2 2 0 0 1 1.7 2z"/></svg>',
@@ -88,6 +89,7 @@ async function conCarga(texto, fn) {
 window.addEventListener("hashchange", router);
 async function router() {
   cerrarSheet();
+  S.antesDeSalir = null;
   const h = location.hash.slice(1) || "/";
   const ses = await api.sesion();
   if (!ses) return vistaLogin();
@@ -108,6 +110,7 @@ async function router() {
   if (ruta === "papelera") return vistaPapelera();
   if (ruta === "compartido") return vistaCompartido();
   if (ruta === "agenda") return vistaAgenda();
+  if (ruta === "lote") return vistaLote();
   if (ruta === "tarifa") return S.yo?.es_admin ? vistaTarifa() : (location.hash = "/");
   if (ruta === "ajustes") return S.yo?.es_admin ? vistaAjustes() : (location.hash = "/");
   location.hash = "/";
@@ -562,10 +565,12 @@ function menuNuevo() {
     <div class="lista-botones">
       <button class="btn grande" id="nCam">${I.cam}<span><b>Hacer foto al parte</b><small>Con la cámara del móvil</small></span></button>
       <button class="btn grande" id="nArch">${I.file}<span><b>Subir PDF o imagen</b><small>Desde archivos, correo o descargas</small></span></button>
+      <button class="btn grande" id="nLote">${I.file}<span><b>Subir varios partes a la vez</b><small>Elige varios PDF o fotos: uno por parte</small></span></button>
       <button class="btn grande" id="nMano">${I.edit}<span><b>Crear a mano</b><small>Sin documento</small></span></button>
     </div>`);
   $("#nCam", s).onclick = () => { cerrarSheet(); $("#inCamara").click(); };
   $("#nArch", s).onclick = () => { cerrarSheet(); $("#inArchivo").click(); };
+  $("#nLote", s).onclick = () => { cerrarSheet(); $("#inLote").click(); };
   $("#nMano", s).onclick = () => { S.borrador = { datos: {} }; cerrarSheet(); location.hash = "/nuevo"; };
 }
 
@@ -628,6 +633,7 @@ async function vistaCompartido() {
     <p>Has compartido <b>${files.length}</b> ${files.length === 1 ? "archivo" : "archivos"}${imgs.length && imgs.length !== files.length ? ` (${imgs.length} fotos)` : ""}. ¿Qué quieres hacer?</p>
     <div class="lista-botones">
       <button class="btn grande" id="cNuevo">${I.file}<span><b>Nuevo parte</b><small>Leer ${files.length > 1 ? "el primero" : "el documento"} con IA${files.length > 1 && imgs.length > 1 ? " (las demás fotos se añaden al guardar)" : ""}</small></span></button>
+      ${files.length > 1 ? `<button class="btn grande" id="cLote">${I.file}<span><b>Varios partes (uno por archivo)</b><small>Lee los ${files.length} con IA y los revisas antes de guardar</small></span></button>` : ""}
       ${imgs.length ? `<button class="btn grande" id="cFotos">${I.cam}<span><b>Añadir ${imgs.length === 1 ? "la foto" : "las " + imgs.length + " fotos"} a un parte</b><small>Fotos del daño o del trabajo terminado</small></span></button>` : ""}
     </div>`);
   $("#cNuevo", s).onclick = () => {
@@ -638,6 +644,7 @@ async function vistaCompartido() {
     procesarArchivo(primero);
   };
   $("#cFotos", s)?.addEventListener("click", () => elegirParteParaFotos(imgs));
+  $("#cLote", s)?.addEventListener("click", () => { cerrarSheet(); S.compartidos = null; iniciarLote(files); });
 }
 
 function elegirParteParaFotos(imgs) {
@@ -690,7 +697,8 @@ async function buscarRepetidos(d) {
   const exp = normRef(d.expediente), enc = normRef(d.num_encargo), sin = normRef(d.num_siniestro);
   const tel = String(d.telefono || "").replace(/\D/g, "").slice(-9);
   for (const x of lista) {
-    if (exp && exp.length >= 5 && [x.expediente, x.num_siniestro].some((v) => normRef(v) === exp)) add(x, "mismo expediente", true);
+    const mismaAseg = normRef(x.aseguradora) === normRef(d.aseguradora);
+    if (exp && (exp.length >= 5 || mismaAseg) && [x.expediente, x.num_siniestro].some((v) => normRef(v) === exp)) add(x, "mismo expediente", true);
     else if (enc && enc.length >= 5 && normRef(x.num_encargo) === enc) add(x, "mismo nº de encargo", true);
     else if (sin && sin.length >= 5 && [x.expediente, x.num_siniestro].some((v) => normRef(v) === sin)) add(x, "mismo nº de siniestro", true);
     else if (tel.length === 9 && [x.telefono, x.telefono2].some((v) => String(v || "").replace(/\D/g, "").slice(-9) === tel)) add(x, "mismo teléfono", false);
@@ -820,6 +828,160 @@ async function actualizarExistente(pid, f) {
   } catch { /* conCarga ya avisa */ }
 }
 
+// ------------------------------------------------------------------ Subida de varios partes (lote)
+const CAMPOS_PARTE = ["aseguradora", "expediente", "num_encargo", "num_siniestro", "poliza", "fecha_encargo", "nombre", "direccion",
+  "codigo_postal", "poblacion", "provincia", "telefono", "telefono2", "averia", "tramitador_nombre", "tramitador_telefono", "tramitador_email"];
+const MAX_LOTE = 20;
+
+function iniciarLote(files) {
+  if (files.length > MAX_LOTE) { toast(`Máximo ${MAX_LOTE} archivos por tanda. Se cogen los ${MAX_LOTE} primeros.`, "error"); files = files.slice(0, MAX_LOTE); }
+  S.lote = files.map((f, i) => ({ i, file: f, nombre: f.name, estado: "pendiente", sel: true }));
+  if (location.hash === "#/lote") vistaLote(); else location.hash = "/lote";
+  procesarLote();
+}
+
+async function procesarLote() {
+  const lote = S.lote; if (!lote) return;
+  const siguiente = () => lote.find((x) => x.estado === "pendiente");
+  const trabajador = async () => {
+    for (let it = siguiente(); it; it = siguiente()) {
+      it.estado = "leyendo"; pintarLote();
+      try {
+        const esPDF = it.file.type === "application/pdf" || /\.pdf$/i.test(it.file.name);
+        it.mime = esPDF ? "application/pdf" : "image/jpeg";
+        it.blob = esPDF ? it.file : await comprimirImagen(it.file, 2000, 0.85);
+        if (it.blob.size > 9.5 * 1024 * 1024) throw new Error("pesa más de 9 MB");
+        it.datos = normalizar(await api.extraer(await blobABase64(it.blob), it.mime));
+        it.rep = await analizarRepeticion(it.datos).catch(() => null);
+        it.estado = "ok";
+      } catch (e) { it.estado = "error"; it.error = e.message; it.sel = false; }
+      if (S.lote !== lote) return;
+      revisarLote(); pintarLote();
+    }
+  };
+  await Promise.all([trabajador(), trabajador()]);
+}
+
+// Marca repetidos (con partes ya guardados y dentro de la propia tanda)
+function revisarLote() {
+  const vistos = new Map();
+  for (const it of S.lote || []) {
+    if (it.estado !== "ok") continue;
+    it.avisos = [];
+    const d = it.datos;
+    const clave = normRef(d.aseguradora) + "|" + normRef(d.expediente) + "|" + normRef(d.num_encargo);
+    if (d.expediente && vistos.has(clave)) { it.avisos.push({ t: `⛔ Igual que el nº ${vistos.get(clave) + 1} de esta tanda`, grave: true }); if (!it.tocado) it.sel = false; }
+    else if (d.expediente) vistos.set(clave, it.i);
+    if (it.rep?.identico) { it.avisos.push({ t: `⛔ Ya lo tienes (${it.rep.orig.nombre || "sin nombre"})`, grave: true }); if (!it.tocado) it.sel = false; }
+    else if (it.rep) it.avisos.push({ t: `🔁 Repetido con cambios: ${it.rep.diffs.map((x) => x.txt).join(", ")}` });
+    if (!d.aseguradora) it.avisos.push({ t: "⚠️ Sin aseguradora" });
+    if (!d.expediente) it.avisos.push({ t: "⚠️ Sin expediente" });
+    if (!/^(\+?34)?[6-9]\d{8}$/.test(d.telefono || "")) it.avisos.push({ t: "⚠️ Sin teléfono completo" });
+  }
+}
+
+function vistaLote() {
+  if (!S.lote?.length) { location.hash = "/"; return; }
+  app.innerHTML = `
+  <header class="barra">
+    <button class="icono" id="volver" aria-label="Volver">${I.back}</button>
+    <h1>Subir varios partes</h1><span></span>
+  </header>
+  <div class="aviso" id="loteAviso"></div>
+  <main id="loteLista" class="lote"></main>
+  <div class="pie-form lote-pie"><button class="btn" id="loteCancelar">Descartar</button><button class="btn primario" id="loteGuardar">Guardar</button></div>`;
+  S.antesDeSalir = () => !S.lote?.some((x) => x.estado === "ok" && x.sel) || confirm("Hay partes leídos sin guardar. ¿Salir y descartarlos?");
+  const salir = () => { if (!S.antesDeSalir()) return; S.antesDeSalir = null; S.lote = null; location.hash = "/"; };
+  $("#volver").onclick = salir;
+  $("#loteCancelar").onclick = salir;
+  $("#loteGuardar").onclick = guardarLote;
+  pintarLote();
+}
+
+function pintarLote() {
+  const cont = $("#loteLista"); if (!cont || !S.lote) return;
+  const n = S.lote.length, hechos = S.lote.filter((x) => ["ok", "error", "guardado"].includes(x.estado)).length;
+  const sel = S.lote.filter((x) => x.estado === "ok" && x.sel).length;
+  $("#loteAviso").innerHTML = hechos < n
+    ? `Leyendo con IA… <b>${hechos} de ${n}</b>. No cierres la app mientras tanto.<div class="barra-prog"><i style="width:${Math.round(hechos / n * 100)}%"></i></div>`
+    : `Revisa los datos: la IA puede equivocarse. Toca un parte para corregirlo. Se guardarán <b>${sel}</b>.`;
+  $("#loteGuardar").textContent = `Guardar ${sel} parte${sel === 1 ? "" : "s"}`;
+  $("#loteGuardar").disabled = hechos < n || !sel;
+  cont.innerHTML = S.lote.map((it) => {
+    const d = it.datos || {};
+    const cab = it.estado === "ok" || it.estado === "guardado"
+      ? `<b>${esc(d.aseguradora || "¿Aseguradora?")} · ${esc(d.expediente || "sin expediente")}</b><span>${esc(d.nombre || "Sin nombre")}</span>
+         <small>${esc([d.direccion, d.poblacion].filter(Boolean).join(", ") || "Sin dirección")}${d.telefono ? " · " + esc(d.telefono) : ""}</small>`
+      : `<b>${esc(it.nombre)}</b><small>${it.estado === "error" ? "❌ No se pudo leer: " + esc(it.error || "") : it.estado === "leyendo" ? "⏳ Leyendo…" : "En cola"}</small>`;
+    return `<div class="lote-item ${it.estado} ${it.sel ? "" : "desmarcado"}" data-i="${it.i}">
+      <label class="lote-check">${it.estado === "ok" ? `<input type="checkbox" ${it.sel ? "checked" : ""}>` : it.estado === "guardado" ? "✅" : ""}</label>
+      <div class="lote-info">${cab}${(it.avisos || []).map((a) => `<em class="${a.grave ? "grave" : ""}">${esc(a.t)}</em>`).join("")}</div>
+      ${it.estado === "ok" ? `<button class="btn peq" data-editar>Corregir</button>` : ""}
+    </div>`;
+  }).join("");
+  $$(".lote-item", cont).forEach((el) => {
+    const it = S.lote[el.dataset.i];
+    el.querySelector("input[type=checkbox]")?.addEventListener("change", (e) => { it.sel = e.target.checked; it.tocado = true; pintarLote(); });
+    el.querySelector("[data-editar]")?.addEventListener("click", () => editarItemLote(it));
+  });
+}
+
+function editarItemLote(it) {
+  const d = it.datos;
+  const opc = [...new Set([...CFG.ASEGURADORAS, d.aseguradora].filter(Boolean))];
+  const c = (k, t, tipo = "text") => `<label>${t}<input name="${k}" type="${tipo}" value="${esc(d[k] ?? "")}"></label>`;
+  const s = abrirSheet(`
+    <h2>Corregir parte</h2>
+    <form id="fLote" class="form">
+      <label>Aseguradora<select name="aseguradora"><option value="">— Elegir —</option>${opc.map((a) => `<option ${a === d.aseguradora ? "selected" : ""}>${esc(a)}</option>`).join("")}</select></label>
+      <div class="dos">${c("expediente", "Nº expediente")}${c("num_encargo", "Nº encargo")}</div>
+      ${c("nombre", "Nombre")}
+      <div class="dos">${c("telefono", "Teléfono", "tel")}${c("telefono2", "Teléfono 2", "tel")}</div>
+      ${c("direccion", "Dirección")}
+      <div class="dos">${c("codigo_postal", "C.P.")}${c("poblacion", "Población")}</div>
+      <label>Avería<textarea name="averia" rows="3">${esc(d.averia ?? "")}</textarea></label>
+      <div class="pie-form"><button type="button" class="btn" data-cerrar>Cancelar</button><button type="submit" class="btn primario">Aplicar</button></div>
+    </form>`);
+  $("#fLote", s).addEventListener("submit", async (e) => {
+    e.preventDefault();
+    Object.assign(d, Object.fromEntries(new FormData(e.target)));
+    for (const k in d) if (typeof d[k] === "string") d[k] = d[k].trim();
+    it.rep = await analizarRepeticion(d).catch(() => null);
+    it.sel = !it.rep?.identico; it.tocado = false;
+    cerrarSheet(); revisarLote(); pintarLote();
+  });
+}
+
+async function guardarLote() {
+  const items = S.lote.filter((x) => x.estado === "ok" && x.sel);
+  if (!items.length) return;
+  const sinAseg = items.filter((x) => !x.datos.aseguradora);
+  if (sinAseg.length) return toast(`Falta la aseguradora en ${sinAseg.length} parte(s). Pulsa "Corregir".`, "error");
+  let ok = 0, fallos = 0;
+  cargando(true, "Guardando…");
+  for (const it of items) {
+    cargando(true, `Guardando ${ok + fallos + 1} de ${items.length}…`);
+    try {
+      const f = {};
+      for (const k of CAMPOS_PARTE) f[k] = it.datos[k] ? it.datos[k] : null;
+      if (f.fecha_encargo && !/^\d{4}-\d{2}-\d{2}$/.test(f.fecha_encargo)) f.fecha_encargo = null;
+      const rep = await analizarRepeticion(f).catch(() => null);
+      if (rep?.identico) { it.estado = "error"; it.error = "ya existía igual; no se ha guardado"; fallos++; continue; }
+      if (rep) { f.repetido_de = rep.orig.id; f.cambios_repetido = rep.diffs.map((x) => x.txt).join(" · "); }
+      const n = await api.crearParte({ ...f, asignado_a: S.yo?.user_id ?? null, datos_ia: it.datos });
+      const ext = it.mime === "application/pdf" ? "pdf" : "jpg";
+      const path = await api.subirArchivo(`${n.id}/documento.${ext}`, it.blob, it.mime);
+      await api.actualizarParte(n.id, { documento_path: path });
+      if (f.repetido_de) api.anadirEvento(f.repetido_de, null, `Ha llegado otro parte repetido con cambios (${f.cambios_repetido}). Se ha guardado como parte nuevo.`).catch(() => {});
+      S.partes = [n, ...(S.partes || [])];
+      it.estado = "guardado"; it.sel = false; ok++;
+    } catch (e) { it.estado = "error"; it.error = e.message; fallos++; }
+  }
+  cargando(false);
+  if (!fallos) { S.lote = null; S.antesDeSalir = null; toast(`${ok} partes guardados`, "ok"); location.hash = "/"; }
+  else { toast(`${ok} guardados, ${fallos} con problemas (revísalos)`, "error"); pintarLote(); }
+}
+
 function irANuevo() {
   if (location.hash === "#/nuevo") vistaFormulario(null); else location.hash = "/nuevo";
 }
@@ -922,7 +1084,8 @@ async function vistaFormulario(id) {
     </div>
   </form>`;
 
-  $("#volver").onclick = $("#cancelar").onclick = () => history.back();
+  if (!id && S.borrador?.archivo) S.antesDeSalir = () => confirm("Se perderán los datos leídos de este parte. ¿Salir sin guardar?");
+  $("#volver").onclick = $("#cancelar").onclick = () => { if (S.antesDeSalir && !S.antesDeSalir()) return; S.antesDeSalir = null; history.back(); };
   if (!id && (S.borrador?.archivo || S.fotosPendientes?.length)) avisoRepetido(p);
   if (!id) {
     let tRep;
@@ -1084,7 +1247,7 @@ async function vistaParte(id) {
     <p class="suave">Va a la papelera (icono de la persona → Papelera) y se puede recuperar.</p></div>
   <div style="height:40px"></div>`;
 
-  $("#volver").onclick = () => (history.length > 1 ? history.back() : (location.hash = "/"));
+  $("#volver").onclick = () => (location.hash = "/");
   $("#menuParte").onclick = () => menuParte(p);
   $("#avanzar")?.addEventListener("click", () => sheetFase(p, sig.id));
   $("#informe")?.addEventListener("click", () => flujoInforme(p));
@@ -1640,7 +1803,8 @@ async function vistaLineas(id, tipo) {
     const n = Math.min(100, Math.max(0, Number(String(d).replace(",", ".")) || 0));
     lineas.forEach((l) => (l.dto = n)); sucio = true; pintarLineas();
   };
-  $("#volver").onclick = () => { if (sucio && !confirm("Hay cambios sin guardar. ¿Salir sin guardar?")) return; location.hash = "/parte/" + id; };
+  S.antesDeSalir = () => !sucio || confirm("Hay cambios sin guardar. ¿Salir sin guardar?");
+  $("#volver").onclick = () => { if (!S.antesDeSalir()) return; S.antesDeSalir = null; location.hash = "/parte/" + id; };
   $("#guardarL").onclick = async () => {
     const limpias = lineas.filter((l) => l.descripcion.trim() || l.codigo).map((l) => ({ ...l, cantidad: Number(l.cantidad) || 0, precio: Number(l.precio) || 0, dto: Number(l.dto) || 0 }));
     const cambios = { [campo]: limpias };
@@ -1919,9 +2083,35 @@ document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "visible" && $("#lista") && S.yo) cargarPartes();
 });
 
+// ------------------------------------------------------------------ Botón "Inicio" en todas las pantallas
+function irAInicio() {
+  if (typeof S.antesDeSalir === "function" && !S.antesDeSalir()) return;
+  cerrarSheet();
+  S.antesDeSalir = null;
+  if (!location.hash || location.hash === "#/" || location.hash === "#") { vistaLista(); window.scrollTo(0, 0); }
+  else location.hash = "/";
+}
+new MutationObserver(() => {
+  const barra = $("#app > header.barra");
+  if (!barra || barra.querySelector(".btn-inicio") || !$("#volver", barra)) return;
+  const b = document.createElement("button");
+  b.className = "icono btn-inicio"; b.setAttribute("aria-label", "Ir al inicio"); b.title = "Inicio";
+  b.innerHTML = I.home;
+  b.onclick = irAInicio;
+  const ultimo = barra.lastElementChild;
+  if (ultimo && ultimo.tagName === "SPAN" && !ultimo.textContent.trim()) ultimo.replaceWith(b);
+  else barra.insertBefore(b, ultimo);
+}).observe($("#app"), { childList: true });
+
 // ------------------------------------------------------------------ Arranque
 $("#inCamara").addEventListener("change", (e) => { procesarArchivo(e.target.files[0]); e.target.value = ""; });
 $("#inArchivo").addEventListener("change", (e) => { procesarArchivo(e.target.files[0]); e.target.value = ""; });
+(() => {
+  const inp = document.createElement("input");
+  inp.type = "file"; inp.id = "inLote"; inp.multiple = true; inp.hidden = true; inp.accept = "application/pdf,image/*";
+  document.body.appendChild(inp);
+  inp.addEventListener("change", (e) => { const f = [...e.target.files]; e.target.value = ""; if (f.length) iniciarLote(f); });
+})();
 api.onAuth(async (ses, evento) => {
   if (evento === "PASSWORD_RECOVERY") {
     const pw = prompt("Escribe tu nueva contraseña (mínimo 8 caracteres)");
