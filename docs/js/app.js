@@ -532,7 +532,7 @@ async function copiaSeguridad() {
         Entrada: fFechaHora(p.created_at), "Último cambio": fFechaHora(p.updated_at), Días: diasParte(p),
       }));
       const hojaLineas = [];
-      for (const p of partes) for (const [tipo, ls] of [["Valoración", p.lineas_valoracion], ["Realizado", p.lineas_realizadas]])
+      for (const p of partes) for (const [tipo, ls] of [["Valoración", p.lineas_valoracion], ["Autorizado", p.lineas_autorizadas], ["Realizado", p.lineas_realizadas]])
         for (const l of ls || []) hojaLineas.push({ Expediente: p.expediente, Cliente: p.nombre, Tipo: tipo, Código: l.codigo, Descripción: l.descripcion, Cantidad: Number(l.cantidad),
           ...(precios ? { "Precio (€)": Number(l.precio), "Dto %": Number(l.dto) || 0, "Importe (€)": importeLinea(l) } : {}) });
       const hojaHist = eventos.map((e) => ({ Expediente: exp.get(e.parte_id)?.expediente ?? "", Cliente: exp.get(e.parte_id)?.nombre ?? "",
@@ -621,8 +621,9 @@ async function cargarXLSX() {
 const DIAS_COBRO = () => Number(CFG.DIAS_COBRO ?? 60);
 const IVA_FACT = () => Number(CFG.IVA_FACTURA ?? 21);
 const conIVA = (base) => { const iva = Math.round(base * IVA_FACT()) / 100; return { base, iva, total: Math.round((base + iva) * 100) / 100 }; };
-// Lo que se factura: siempre el importe autorizado si lo hay; si no, lo realizado; si no, lo valorado
+// Lo que se factura: los códigos autorizados; si no hay, el importe autorizado; si no, lo realizado; si no, lo valorado
 function importeParte(p) {
+  if ((p.lineas_autorizadas || []).length) return totalesLineas(p.lineas_autorizadas, 0).base;
   if (p.importe_autorizado != null) return Number(p.importe_autorizado);
   if ((p.lineas_realizadas || []).length) return totalesLineas(p.lineas_realizadas, 0).base;
   if ((p.lineas_valoracion || []).length) return totalesLineas(p.lineas_valoracion, 0).base;
@@ -708,9 +709,9 @@ async function vistaFacturacion() {
       </section>`;
     $("#fMes").onchange = (e) => { mes = e.target.value; sessionSet("factMes", mes); sel.clear(); pinta(); };
     $$("#fact .fact-fila input").forEach((c) => c.onchange = () => { c.checked ? sel.add(c.dataset.id) : sel.delete(c.dataset.id); pinta(); });
-    const lineasDe = (p) => ((p.lineas_realizadas || []).length ? p.lineas_realizadas : (p.lineas_valoracion || []));
-    const filasExp = () => elegidos.map((p) => ({ ...p, importe: importeParte(p) || 0, lineas: lineasDe(p), autorizado: p.importe_autorizado != null,
-      trabajo: ((p.lineas_realizadas || []).length ? p.lineas_realizadas : (p.lineas_valoracion || [])).map((l) => `${l.codigo || ""} ${l.descripcion || ""}`.trim()).join("; ") || (p.averia || "").slice(0, 90) }));
+    const lineasDe = (p) => [p.lineas_autorizadas, p.lineas_realizadas, p.lineas_valoracion].find((l) => (l || []).length) || [];
+    const filasExp = () => elegidos.map((p) => ({ ...p, importe: importeParte(p) || 0, lineas: lineasDe(p), autorizado: !(p.lineas_autorizadas || []).length && p.importe_autorizado != null,
+      trabajo: lineasDe(p).map((l) => `${l.codigo || ""} ${l.descripcion || ""}`.trim()).join("; ") || (p.averia || "").slice(0, 90) }));
     // Todos los archivos empiezan por el nombre de la empresa, para que MULTIBETT vea de quién vienen
     const nombreRelacion = async (ext, ref) => {
       const { empresaArchivo, slug } = await cargarPDF();
@@ -1653,7 +1654,8 @@ async function vistaParte(id) {
     <h3>${esConexion(p) ? "Trabajo solicitado" : "Avería / daño"}</h3>
     <p class="pre">${esc(p.averia || "—")}</p>
   </section>
-  ${idx >= idxEstado("visitado") || (p.lineas_valoracion || []).length ? seccionLineas(p, "valoracion") : ""}
+  ${(p.lineas_autorizadas || []).length && !esConexion(p) ? seccionLineas(p, "autorizados")
+    : idx >= idxEstado("visitado") || (p.lineas_valoracion || []).length ? seccionLineas(p, "valoracion") : ""}
   ${idx >= idxEstado("autorizado") || (p.lineas_realizadas || []).length ? seccionLineas(p, "realizados") : ""}
 
   <section class="tarjeta datos">
@@ -1705,13 +1707,18 @@ async function vistaParte(id) {
   $("#volver").onclick = () => (location.hash = "/");
   $("#menuParte").onclick = () => menuParte(p);
   $("#aContacto").onclick = () => guardarContacto(p);
-  $("#avanzar")?.addEventListener("click", () => sheetFase(p, sig.id));
+  // Autorizar = confirmar la valoración código a código (si hay códigos valorados)
+  const irAFase = (dest) => {
+    if (dest === "autorizado" && !esConexion(p) && (p.lineas_valoracion || []).length && idxEstado(p.estado) < idxEstado("autorizado")) { location.hash = `/lineas/${p.id}/autorizados`; return; }
+    sheetFase(p, dest);
+  };
+  $("#avanzar")?.addEventListener("click", () => irAFase(sig.id));
   $("#informe")?.addEventListener("click", () => flujoInforme(p));
   $("#nota").onclick = () => sheetFase(p, null);
   $$(".paso").forEach((b) => b.addEventListener("click", () => {
     const dest = b.dataset.estado;
     if (dest === p.estado) return;
-    sheetFase(p, dest);
+    irAFase(dest);
   }));
   $("#asignar").addEventListener("change", async (ev) => {
     await conCarga("Guardando…", () => api.actualizarParte(p.id, { asignado_a: ev.target.value || null }));
@@ -1733,16 +1740,20 @@ const htmlTotales = (t, iva = CFG.IVA) => iva
   ? `<span>Base imponible</span><b>${fEuros(t.base)}</b><span>IVA ${iva}%</span><b>${fEuros(t.iva)}</b><span>Total</span><b class="grande">${fEuros(t.total)}</b>`
   : `<span>Total (sin IVA)</span><b class="grande">${fEuros(t.base)}</b>`;
 
+const CAMPO_LINEAS = { valoracion: "lineas_valoracion", autorizados: "lineas_autorizadas", realizados: "lineas_realizadas" };
 function seccionLineas(p, tipo) {
-  const lineas = (tipo === "realizados" ? p.lineas_realizadas : p.lineas_valoracion) || [];
+  const lineas = p[CAMPO_LINEAS[tipo]] || [];
   const t = totalesLineas(lineas, ivaDe(p));
+  const titulo = tipo === "realizados" ? "Trabajos realizados" : tipo === "autorizados" ? "Valoración autorizada" : (esConexion(p) ? "Presupuesto" : "Valoración");
+  const vacio = tipo === "realizados" ? "Sin trabajos anotados. Al editarlos se copian los autorizados (o los de la valoración) para que solo cambies lo que haya variado." : "Sin códigos. Busca por código o por descripción.";
   return `<section class="tarjeta">
-    <div class="h3-fila"><h3>${tipo === "realizados" ? "Trabajos realizados" : (esConexion(p) ? "Presupuesto" : "Valoración")}</h3>
-      <a class="btn peq" href="#/lineas/${p.id}/${tipo}">${lineas.length ? "Editar" : "+ Códigos"}</a></div>
+    <div class="h3-fila"><h3>${titulo}</h3>
+      <span>${tipo === "valoracion" && lineas.length && !esConexion(p) && idxEstado(p.estado) >= idxEstado("valorado") ? `<a class="btn peq primario" href="#/lineas/${p.id}/autorizados">Autorizar</a> ` : ""}<a class="btn peq" href="#/lineas/${p.id}/${tipo}">${lineas.length ? "Editar" : "+ Códigos"}</a></span></div>
+    ${tipo === "autorizados" ? `<p class="suave" style="font-size:.85em;margin:.2em 0 .6em">Esto es lo que se factura<span class="precio">. Valorado: ${fEuros(totalesLineas(p.lineas_valoracion || []).base)}</span> · <a href="#/lineas/${p.id}/valoracion">ver valoración original</a></p>` : ""}
     ${lineas.length ? `<div class="lineas-mini">${lineas.map((l) => `
       <div><span><b>${esc(l.codigo || "—")}</b> ${esc(l.descripcion)}</span><span>${Number(l.cantidad)}×<span class="precio"> · ${fEuros(importeLinea(l))}${Number(l.dto) ? ` <small>(-${Number(l.dto)}%)</small>` : ""}</span></span></div>`).join("")}</div>
       <div class="totales precio">${htmlTotales(t, ivaDe(p))}</div>`
-      : `<p class="suave">${tipo === "realizados" ? "Sin trabajos anotados. Al editarlos se copian los de la valoración para que solo cambies lo que haya variado." : "Sin códigos. Busca por código o por descripción."}</p>`}
+      : `<p class="suave">${vacio}</p>`}
   </section>`;
 }
 
@@ -2043,7 +2054,7 @@ function sheetFase(p, destino) {
       ${destino === "contactado" ? `<label>Fecha y hora de la visita<input type="datetime-local" name="fecha_cita" value="${toLocalInput(p.fecha_cita)}"></label>` : ""}
       ${destino === "valorado" ? `<a class="btn ancho" href="#/lineas/${p.id}/valoracion">📋 ${(p.lineas_valoracion || []).length ? "Revisar" : "Meter"} códigos de la tarifa</a>
         <label class="precio">Importe valorado (€, sin IVA)<input type="number" step="0.01" inputmode="decimal" name="importe_valorado" value="${(p.lineas_valoracion || []).length ? totalesLineas(p.lineas_valoracion).base : (p.importe_valorado ?? "")}"></label>` : ""}
-      ${destino === "autorizado" ? `<label class="precio">Importe autorizado (€)<input type="number" step="0.01" inputmode="decimal" name="importe_autorizado" value="${p.importe_autorizado ?? p.importe_valorado ?? ""}"></label>` : ""}
+      ${destino === "autorizado" ? `<label class="precio">Importe autorizado (€)<input type="number" step="0.01" inputmode="decimal" name="importe_autorizado" value="${(p.lineas_autorizadas || []).length ? totalesLineas(p.lineas_autorizadas).base : (p.importe_autorizado ?? p.importe_valorado ?? "")}"></label>` : ""}
       ${destino === "visitado" ? `<label class="btn ancho">${I.cam} Fotos de antes (opcional)<input type="file" accept="image/*" multiple hidden name="fotos" data-tipo="antes"></label><small class="suave" id="nFotos"></small>` : ""}
       ${destino === "realizado" ? `<a class="btn ancho" href="#/lineas/${p.id}/realizados">📋 ${(p.lineas_realizadas || []).length ? "Revisar" : "Anotar"} trabajos realizados (códigos)</a>
         <label class="btn ancho">${I.cam} Fotos del trabajo terminado<input type="file" accept="image/*" multiple hidden name="fotos" data-tipo="despues"></label><small class="suave" id="nFotos"></small>
@@ -2263,19 +2274,22 @@ async function vistaLineas(id, tipo) {
   let p;
   try { p = await conCarga("Cargando…", () => api.obtenerParte(id)); } catch { location.hash = "/"; return; }
   await cargarTarifa();
-  const campo = tipo === "realizados" ? "lineas_realizadas" : "lineas_valoracion";
+  if (!CAMPO_LINEAS[tipo]) tipo = "valoracion";
+  const campo = CAMPO_LINEAS[tipo];
   let lineas = JSON.parse(JSON.stringify(p[campo] || []));
-  let copiado = false;
-  if (tipo === "realizados" && !lineas.length && (p.lineas_valoracion || []).length) { lineas = JSON.parse(JSON.stringify(p.lineas_valoracion)); copiado = true; }
+  let copiado = "";
+  const origen = tipo === "realizados" ? ((p.lineas_autorizadas || []).length ? ["lineas_autorizadas", "autorizados"] : ["lineas_valoracion", "de la valoración"])
+    : tipo === "autorizados" ? ["lineas_valoracion", "de la valoración"] : null;
+  if (origen && !lineas.length && (p[origen[0]] || []).length) { lineas = JSON.parse(JSON.stringify(p[origen[0]])); copiado = origen[1]; }
   let sucio = copiado;
 
   app.innerHTML = `
   <header class="barra">
     <button class="icono" id="volver" aria-label="Volver">${I.back}</button>
-    <h1>${tipo === "realizados" ? "Trabajos realizados" : "Valoración"} <small class="sub">${esc(p.expediente || "")}</small></h1>
-    <button class="btn peq guardar" id="guardarL">Guardar</button>
+    <h1>${tipo === "realizados" ? "Trabajos realizados" : tipo === "autorizados" ? "Autorizar" : "Valoración"} <small class="sub">${esc(p.expediente || "")}</small></h1>
+    <button class="btn peq guardar" id="guardarL">${tipo === "autorizados" && idxEstado(p.estado) < idxEstado("autorizado") ? "Autorizar" : "Guardar"}</button>
   </header>
-  ${copiado ? '<div class="aviso">He copiado los códigos de la valoración. Cambia solo lo que haya variado y guarda.</div>' : ""}
+  ${copiado ? `<div class="aviso">He copiado los códigos ${copiado}. ${tipo === "autorizados" ? "Quita o añade lo que no te hayan autorizado y pulsa arriba. Esto es lo que se factura." : "Cambia solo lo que haya variado y guarda."}</div>` : ""}
   <div class="buscador">${I.search}<input id="bT" type="search" placeholder="Código o descripción (p.ej. 5108, rodapié, galce)" autocomplete="off"></div>
   <div class="chips cats" id="catsT"></div>
   <div id="resT" class="resultados"></div>
@@ -2374,7 +2388,15 @@ async function vistaLineas(id, tipo) {
     const limpias = lineas.filter((l) => l.descripcion.trim() || l.codigo).map((l) => ({ ...l, cantidad: Number(l.cantidad) || 0, precio: Number(l.precio) || 0, dto: Number(l.dto) || 0 }));
     const cambios = { [campo]: limpias };
     if (tipo === "valoracion") cambios.importe_valorado = totalesLineas(limpias).base;
-    await conCarga("Guardando…", () => api.actualizarParte(id, cambios));
+    const autorizaAhora = tipo === "autorizados" && limpias.length && idxEstado(p.estado) < idxEstado("autorizado");
+    if (tipo === "autorizados") {
+      cambios.importe_autorizado = limpias.length ? totalesLineas(limpias).base : null;
+      if (autorizaAhora) cambios.estado = "autorizado";
+    }
+    await conCarga("Guardando…", async () => {
+      await api.actualizarParte(id, cambios);
+      if (autorizaAhora) await api.anadirEvento(id, "autorizado", `Valoración confirmada: ${limpias.length} código(s), ${fEuros(cambios.importe_autorizado)} sin IVA.`);
+    });
     sucio = false; toast("Guardado", "ok"); location.hash = "/parte/" + id;
   };
   pintarLineas();
