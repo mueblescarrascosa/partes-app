@@ -1268,6 +1268,7 @@ function normalizar(d = {}) {
   }
   for (const k of ["telefono", "telefono2", "tramitador_telefono"]) {
     if (r[k] && /^[\d\s.\-+]+$/.test(r[k])) r[k] = r[k].replace(/[\s.\-]/g, "");
+    if (/^(\+|00)34\d{9}$/.test(r[k] || "")) r[k] = r[k].replace(/^(\+|00)34/, "");
   }
   // Teléfono ilegible o tapado: busca teléfonos escritos en la descripción
   const telOK = (t) => /^(\+?34)?[6-9]\d{8}$/.test(t || "");
