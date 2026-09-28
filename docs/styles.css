@@ -378,3 +378,23 @@ button.accion { border: 0; font: inherit; font-size: 13px; font-weight: 600; cur
 .aviso.lote-pend { background: #dbeafe; color: #1e3a8a; }
 .aviso.lote-pend .dos { margin-top: 8px; display: flex; gap: 8px; }
 @media (prefers-color-scheme: dark) { .aviso.lote-pend { background: #1e3a8a; color: #dbeafe; } }
+
+/* ---------- Editor de bocetos (pantalla completa) ---------- */
+body.sin-scroll { overflow: hidden; }
+.boceto { position: fixed; inset: 0; z-index: 300; background: #334155; display: flex; flex-direction: column; touch-action: none; user-select: none; -webkit-user-select: none; }
+.boceto-barra, .boceto-herr { display: flex; align-items: center; gap: 6px; padding: 6px 8px; background: #0f172a; color: #fff; flex-wrap: wrap; }
+.boceto-barra { padding-top: max(6px, env(safe-area-inset-top)); }
+.boceto-herr { padding-bottom: max(6px, env(safe-area-inset-bottom)); justify-content: center; }
+.bb-titulo { flex: 1; font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.boceto button { min-width: 40px; height: 40px; border-radius: 10px; border: 0; background: #1e293b; color: #fff; font-size: 19px; font-weight: 700; cursor: pointer; display: inline-grid; place-items: center; padding: 0 8px; }
+.boceto button.on { background: #2563eb; }
+.boceto .bb-ok { background: #16a34a; font-size: 15px; padding: 0 14px; }
+.boceto .bb-txt { background: transparent; }
+.boceto .bh-color { background: var(--c); border: 3px solid #64748b; }
+.boceto .bh-color.on { border-color: #fff; background: var(--c); }
+.boceto [data-grosor] i { display: block; border-radius: 50%; background: #fff; }
+.bh-grupo { display: flex; gap: 4px; padding: 0 4px; border-right: 1px solid #334155; }
+.bh-grupo:last-child { border-right: 0; }
+.boceto-lienzo { flex: 1; display: grid; place-items: center; overflow: hidden; min-height: 0; padding: 6px; }
+.boceto-lienzo canvas { background: #fff; box-shadow: 0 4px 20px rgba(0,0,0,.35); touch-action: none; }
+.boceto-mini img { background: #fff; object-fit: contain !important; }

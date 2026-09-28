@@ -1,7 +1,7 @@
 // Service worker: permite instalar la app y abrirla sin conexión (la última versión cargada).
-const CACHE = "partes-v15";
+const CACHE = "partes-v16";
 const COMPARTIDO = "partes-compartido";
-const BASE = ["./", "index.html", "styles.css", "js/app.js", "js/api.js", "js/util.js", "js/pdf.js", "js/config.js",
+const BASE = ["./", "index.html", "styles.css", "js/app.js", "js/api.js", "js/util.js", "js/pdf.js", "js/boceto.js", "js/config.js",
 "manifest.webmanifest", "icons/icon-192.png"];
 
 self.addEventListener("install", (e) => { e.waitUntil(caches.open(CACHE).then((c) => c.addAll(BASE)).then(() => self.skipWaiting())); });
