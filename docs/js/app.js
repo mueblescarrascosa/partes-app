@@ -4,7 +4,8 @@ import {
   fFecha, fFechaHora, fEuros, hace, toLocalInput, blobABase64, comprimirImagen, panelFirma, toast,
   importeLinea, totalesLineas, buscarEnTarifa, codigoAdicional, chipDias, recortarImagen, linkCalendario, diasParte, zonaDe,
 } from "./util.js";
-import { generarInforme, generarRelacion } from "./pdf.js";
+// pdf.js se carga solo cuando hace falta (si falla, no impide arrancar la app)
+const cargarPDF = () => import("./pdf.js");
 
 const CFG = window.APP_CONFIG;
 const DEST = {
@@ -138,6 +139,7 @@ function vistaLogin() {
     const f = new FormData(e.target);
     await conCarga("Entrando…", () => api.entrar(f.get("email"), f.get("password")));
     S.yo = null; router();
+setTimeout(() => { try { sessionStorage.removeItem("pa_recarga"); } catch { /* nada */ } }, 8000);
   });
   $("#olvido").addEventListener("click", async () => {
     const email = $("#fLogin [name=email]").value;
@@ -646,7 +648,7 @@ async function vistaFacturacion() {
       trabajo: ((p.lineas_realizadas || []).length ? p.lineas_realizadas : (p.lineas_valoracion || [])).map((l) => `${l.codigo || ""} ${l.descripcion || ""}`.trim()).join("; ") || (p.averia || "").slice(0, 90) }));
     $("#fPDF")?.addEventListener("click", async () => {
       try {
-        const blob = await conCarga("Generando PDF…", async () => generarRelacion(filasExp(), `RELACIÓN DE TRABAJOS · ${nombreMes(mes).toUpperCase()}`, DEST.nombre));
+        const blob = await conCarga("Generando PDF…", async () => (await cargarPDF()).generarRelacion(filasExp(), `RELACIÓN DE TRABAJOS · ${nombreMes(mes).toUpperCase()}`, DEST.nombre));
         const nombre = `Relacion_${mes}_${(DEST.nombre || "").replace(/\W+/g, "")}.pdf`;
         const file = new File([blob], nombre, { type: "application/pdf" });
         if (navigator.canShare?.({ files: [file] })) { try { await navigator.share({ files: [file], title: nombre }); return; } catch (e) { if (e.name === "AbortError") return; } }
@@ -1873,6 +1875,7 @@ async function enviarPDF(pIn, precios) {
   try {
     ({ blob, nombre, p } = await conCarga("Generando PDF…", async () => {
       const p = await api.obtenerParte(pIn.id);
+      const { generarInforme } = await cargarPDF();
       const r = await generarInforme(p, api, S.miembros, { precios });
       const path = await api.subirArchivo(`${p.id}/${r.nombre}`, r.blob, "application/pdf");
       await api.actualizarParte(p.id, { informe_path: path });
