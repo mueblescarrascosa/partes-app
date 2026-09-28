@@ -307,7 +307,8 @@ export function generarRelacion(filas, titulo, destino = "", ivaPct = 0) {
     fila([fFecha(f.realizado_at), f.aseguradora, f.expediente, f.num_encargo, f.nombre, lugar,
       ls.map((l) => l.codigo || ""),
       ls.map((l) => cant(l) + (l.descripcion || "") + (cant(l) && l.precio != null ? ` (${fEuros(l.precio)}/ud.)` : "")),
-      ls.map((l) => (l.precio != null && l.precio !== "" ? fEuros(importeLinea(l)) : "")), fEuros(f.importe)]);
+      ls.map((l) => (l.precio != null && l.precio !== "" ? fEuros(importeLinea(l)) : "")),
+      f.autorizado ? `Valor autorizado\n${fEuros(f.importe)}` : fEuros(f.importe)]);
   }
   if (y + 26 > ALTO - 14) { doc.addPage(); cab(); }
   const iva = Math.round(total * ivaPct) / 100;

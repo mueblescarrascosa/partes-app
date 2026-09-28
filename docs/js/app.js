@@ -709,14 +709,7 @@ async function vistaFacturacion() {
     $("#fMes").onchange = (e) => { mes = e.target.value; sessionSet("factMes", mes); sel.clear(); pinta(); };
     $$("#fact .fact-fila input").forEach((c) => c.onchange = () => { c.checked ? sel.add(c.dataset.id) : sel.delete(c.dataset.id); pinta(); });
     const lineasDe = (p) => ((p.lineas_realizadas || []).length ? p.lineas_realizadas : (p.lineas_valoracion || []));
-    // Si los códigos no suman lo autorizado, se añade un renglón de ajuste para que la relación cuadre
-    const lineasCuadradas = (p) => {
-      const ls = lineasDe(p);
-      if (p.importe_autorizado == null || !ls.length) return ls;
-      const dif = Math.round((Number(p.importe_autorizado) - totalesLineas(ls, 0).base) * 100) / 100;
-      return Math.abs(dif) < 0.01 ? ls : [...ls, { codigo: "AJUSTE", descripcion: "Ajuste a importe autorizado", cantidad: 1, precio: dif, dto: 0 }];
-    };
-    const filasExp = () => elegidos.map((p) => ({ ...p, importe: importeParte(p) || 0, lineas: lineasCuadradas(p),
+    const filasExp = () => elegidos.map((p) => ({ ...p, importe: importeParte(p) || 0, lineas: lineasDe(p), autorizado: p.importe_autorizado != null,
       trabajo: ((p.lineas_realizadas || []).length ? p.lineas_realizadas : (p.lineas_valoracion || [])).map((l) => `${l.codigo || ""} ${l.descripcion || ""}`.trim()).join("; ") || (p.averia || "").slice(0, 90) }));
     // Todos los archivos empiezan por el nombre de la empresa, para que MULTIBETT vea de quién vienen
     const nombreRelacion = async (ext, ref) => {
