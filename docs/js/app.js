@@ -1668,8 +1668,13 @@ async function vistaParte(id) {
   </section>
 
   <section class="tarjeta">
-    <div class="h3-fila"><h3>Fotos (${p.fotos.length})</h3><button class="btn peq" id="addFoto">${I.cam} Añadir</button></div>
-    <div class="fotos" id="fotos">${p.fotos.length ? "" : '<p class="suave">Sin fotos</p>'}</div>
+    <div class="h3-fila"><h3>Fotos (${fotosDe(p).length})</h3><button class="btn peq" id="addFoto">${I.cam} Añadir</button></div>
+    <div class="fotos" id="fotos">${fotosDe(p).length ? "" : '<p class="suave">Sin fotos</p>'}</div>
+  </section>
+
+  <section class="tarjeta">
+    <div class="h3-fila"><h3>Bocetos (${bocetosDe(p).length})</h3><button class="btn peq" id="addBoceto">✏️ Dibujar</button></div>
+    <div class="fotos" id="bocetos">${bocetosDe(p).length ? "" : '<p class="suave">Dibuja el mueble, medidas… Es solo para uso interno: no se envía en los informes.</p>'}</div>
   </section>
 
   <section class="tarjeta">
@@ -1710,6 +1715,7 @@ async function vistaParte(id) {
     if (w) w.location = url; else location.href = url;
   });
   $("#addFoto").onclick = () => sheetFotos(p);
+  $("#addBoceto").onclick = () => nuevoBoceto(p);
   $$(".editar-ev").forEach((b) => b.addEventListener("click", () => sheetEvento(p, p.eventos.find((e) => String(e.id) === b.dataset.id))));
   $("#aPapelera").onclick = () => enviarPapelera(p);
   pintarFotos(p);
@@ -1742,14 +1748,68 @@ function plantilla(t, p) {
   }[k] ?? ""));
 }
 
+// Bocetos: dibujos internos (se guardan como fotos de tipo "boceto" y nunca salen en informes)
+const fotosDe = (p) => (p.fotos || []).filter((f) => f.tipo !== "boceto");
+const bocetosDe = (p) => (p.fotos || []).filter((f) => f.tipo === "boceto");
+const cargarBoceto = () => import("./boceto.js");
+
+async function nuevoBoceto(p, fondo = null, reemplaza = null) {
+  let abrirBoceto;
+  try { ({ abrirBoceto } = await cargarBoceto()); } catch { toast("No se pudo abrir el editor de dibujo", "error"); return; }
+  const blob = await abrirBoceto({ fondo, titulo: `Boceto · ${p.nombre || p.expediente || ""}` });
+  if (!blob) return;
+  await conCarga("Guardando dibujo…", async () => {
+    const path = await api.subirArchivo(`${p.id}/boceto_${Date.now()}.png`, blob, "image/png");
+    await api.anadirFoto(p.id, path, "boceto");
+    if (reemplaza) await api.borrarFoto(reemplaza).catch(() => {});
+  });
+  toast("Dibujo guardado", "ok");
+  vistaParte(p.id);
+}
+
+function pintarBocetos(p) {
+  const cont = $("#bocetos"), lista = bocetosDe(p);
+  if (!cont || !lista.length) return;
+  cont.innerHTML = lista.map((f) => `<figure data-id="${f.id}" class="boceto-mini"><img alt="Boceto" loading="lazy"><figcaption>${fFecha(f.created_at)}</figcaption></figure>`).join("");
+  for (const f of lista) {
+    const fig = cont.querySelector(`figure[data-id="${f.id}"]`);
+    api.urlArchivo(f.path).then((u) => { fig.querySelector("img").src = u; }).catch(() => {});
+    fig.addEventListener("click", () => {
+      const s = abrirSheet(`
+        <h2>Boceto</h2>
+        <div class="lista-botones">
+          <button class="btn ancho" id="bVer">👁 Verlo en grande</button>
+          <button class="btn ancho" id="bEditar">✏️ Seguir dibujando encima</button>
+          <button class="btn ancho peligro" id="bBorrar">🗑 Borrar boceto</button>
+          <button class="btn texto ancho" data-cerrar>Cerrar</button>
+        </div>`);
+      $("#bVer", s).onclick = async () => { cerrarSheet(); window.open(await api.urlArchivo(f.path), "_blank"); };
+      $("#bEditar", s).onclick = async () => {
+        cerrarSheet();
+        let fondo;
+        try { fondo = await conCarga("Abriendo…", () => api.descargarArchivo(f.path)); } catch { return; }
+        nuevoBoceto(p, fondo, f);
+      };
+      $("#bBorrar", s).onclick = async () => {
+        if (!confirm("¿Borrar este boceto?")) return;
+        cerrarSheet();
+        await conCarga("Borrando…", () => api.borrarFoto(f));
+        vistaParte(p.id);
+      };
+    });
+  }
+}
+
 async function pintarFotos(p) {
+  pintarBocetos(p);
   const cont = $("#fotos");
-  if (!p.fotos.length) return;
+  const fotos = fotosDe(p);
+  if (!fotos.length) return;
   const etiquetas = { antes: "Antes", despues: "Después", otra: "" };
-  cont.innerHTML = p.fotos.map((f) => `
+  cont.innerHTML = fotos.map((f) => `
     <figure data-id="${f.id}"><img alt="" loading="lazy"><figcaption>${etiquetas[f.tipo] || ""}</figcaption>
       <button class="borrar-foto" aria-label="Borrar foto">${I.x}</button></figure>`).join("");
-  for (const f of p.fotos) {
+  for (const f of fotos) {
     const fig = cont.querySelector(`figure[data-id="${f.id}"]`);
     api.urlArchivo(f.path).then((u) => { fig.querySelector("img").src = u; }).catch(() => {});
     fig.querySelector("img").addEventListener("click", async () => window.open(await api.urlArchivo(f.path), "_blank"));
@@ -2051,7 +2111,7 @@ function textoInforme(p, conPrecios) {
 }
 
 function fotosParaEnvio(p) {
-  const fotos = p.fotos || [];
+  const fotos = fotosDe(p);   // los bocetos son internos: nunca se envían
   if (p.estado === "realizado") {
     const desp = fotos.filter((f) => f.tipo === "despues");
     return desp.length ? desp : fotos;
