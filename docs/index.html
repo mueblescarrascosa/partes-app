@@ -25,6 +25,16 @@
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.117.1/dist/umd/supabase.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/jspdf@4.2.1/dist/jspdf.umd.min.js"></script>
+  <script>
+    // Si al actualizar se mezclan archivos nuevos y viejos (pantalla en blanco), limpia la caché y recarga una vez
+    window.addEventListener("error", function (e) {
+      var m = String((e && e.message) || "");
+      if (!/does not provide an export|Importing a module script failed|Failed to fetch dynamically imported module/.test(m)) return;
+      try { if (sessionStorage.getItem("pa_recarga")) return; sessionStorage.setItem("pa_recarga", "1"); } catch (_) { return; }
+      var limpiar = window.caches ? caches.keys().then(function (ks) { return Promise.all(ks.filter(function (k) { return k !== "partes-compartido"; }).map(function (k) { return caches.delete(k); })); }) : Promise.resolve();
+      limpiar.then(function () { location.reload(); }, function () { location.reload(); });
+    }, true);
+  </script>
   <script src="js/config.js"></script>
   <script type="module" src="js/app.js"></script>
 </body>
