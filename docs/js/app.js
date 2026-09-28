@@ -707,13 +707,26 @@ async function vistaFacturacion() {
       </section>`;
     $("#fMes").onchange = (e) => { mes = e.target.value; sessionSet("factMes", mes); sel.clear(); pinta(); };
     $$("#fact .fact-fila input").forEach((c) => c.onchange = () => { c.checked ? sel.add(c.dataset.id) : sel.delete(c.dataset.id); pinta(); });
-    const filasExp = () => elegidos.map((p) => ({ ...p, importe: importeParte(p) || 0,
+    const lineasDe = (p) => ((p.lineas_realizadas || []).length ? p.lineas_realizadas : (p.lineas_valoracion || []));
+    const filasExp = () => elegidos.map((p) => ({ ...p, importe: importeParte(p) || 0, lineas: lineasDe(p),
       trabajo: ((p.lineas_realizadas || []).length ? p.lineas_realizadas : (p.lineas_valoracion || [])).map((l) => `${l.codigo || ""} ${l.descripcion || ""}`.trim()).join("; ") || (p.averia || "").slice(0, 90) }));
+    // Nombre que dice de dónde viene: una sola obra → aseguradora + expediente + calle; varias → mes + aseguradoras
+    const nombreRelacion = (ext, ref) => {
+      const slug = (t) => String(t || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^A-Za-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+      const emp = slug(CFG.EMPRESA?.nombre || "").split("-").filter((w) => !/^(sl|sa|slu)$/i.test(w)).slice(0, 2).join("-");
+      const fra = ref ? `_Fra-${slug(ref)}` : "";
+      if (elegidos.length === 1) {
+        const p = elegidos[0];
+        return `Relacion_${emp}_${slug(p.aseguradora) || "Parte"}_${slug(p.expediente) || ""}${p.direccion ? "_" + slug(p.direccion).slice(0, 28).replace(/-+$/, "") : ""}${p.poblacion ? "_" + slug(p.poblacion).slice(0, 20) : ""}${fra}.${ext}`;
+      }
+      const aseg = [...new Set(elegidos.map((p) => slug(p.aseguradora)).filter(Boolean))];
+      return `Relacion_${emp}_${mes}_${aseg.length <= 3 ? aseg.join("-") : "Varias"}_${elegidos.length}-trabajos${fra}.${ext}`;
+    };
     // Genera el PDF y lo comparte (o descarga). Devuelve true si se ha enviado/descargado.
     const enviarPDFRelacion = async (ref) => {
       const blob = await conCarga("Generando PDF…", async () => (await cargarPDF()).generarRelacion(filasExp(),
         `RELACIÓN DE TRABAJOS · ${nombreMes(mes).toUpperCase()}${ref ? " · FRA. " + ref : ""}`, DEST.nombre, IVA_FACT()));
-      const nombre = `Relacion_${mes}_${(DEST.nombre || "").replace(/\W+/g, "")}.pdf`;
+      const nombre = nombreRelacion("pdf", ref);
       const file = new File([blob], nombre, { type: "application/pdf" });
       if (navigator.canShare?.({ files: [file] })) {
         try { await navigator.share({ files: [file], title: nombre }); return true; }
@@ -747,11 +760,12 @@ async function vistaFacturacion() {
         await conCarga("Generando Excel…", async () => {
           await cargarXLSX();
           const filas = filasExp().map((p) => ({ Terminado: fFecha(p.realizado_at), Aseguradora: p.aseguradora, Expediente: p.expediente, Encargo: p.num_encargo,
-            Cliente: p.nombre, Población: p.poblacion, Trabajo: p.trabajo, "Importe sin IVA (€)": p.importe, Factura: p.factura_ref || "" }));
+            Cliente: p.nombre, Dirección: p.direccion || "", Población: [p.codigo_postal, p.poblacion].filter(Boolean).join(" "),
+            Códigos: (p.lineas || []).map((l) => l.codigo || "").filter(Boolean).join("\n"), Trabajo: (p.lineas || []).length ? p.lineas.map((l) => `${l.codigo ? l.codigo + " · " : ""}${l.descripcion || ""}`).join("\n") : p.trabajo, "Importe sin IVA (€)": p.importe, Factura: p.factura_ref || "" }));
           const t = conIVA(filas.reduce((a, f) => a + (f["Importe sin IVA (€)"] || 0), 0));
           filas.push({}, { Trabajo: "Base imponible", "Importe sin IVA (€)": t.base }, { Trabajo: `IVA ${IVA_FACT()}%`, "Importe sin IVA (€)": t.iva }, { Trabajo: "TOTAL", "Importe sin IVA (€)": t.total });
           const wb = XLSX.utils.book_new(); XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(filas), nombreMes(mes).slice(0, 30));
-          descargar(new Blob([XLSX.write(wb, { bookType: "xlsx", type: "array" })], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }), `Relacion_${mes}.xlsx`);
+          descargar(new Blob([XLSX.write(wb, { bookType: "xlsx", type: "array" })], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }), nombreRelacion("xlsx"));
         });
       } catch { /* conCarga avisa */ }
     });

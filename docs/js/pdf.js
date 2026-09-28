@@ -222,8 +222,13 @@ export async function generarInforme(parte, api, miembros = [], opc = {}) {
     doc.text(`Página ${i} de ${n}`, W - M, ALTO - 8, { align: "right" });
   }
 
-  const nombreArchivo = `${esFinal ? "Terminado" : (cx ? "Presupuesto" : "Visita")}_${(parte.aseguradora || "parte").replace(/\s+/g, "")}_${(parte.expediente || parte.id.slice(0, 8)).replace(/[^\w-]/g, "")}.pdf`;
+  const nombreArchivo = `${esFinal ? "Terminado" : (cx ? "Presupuesto" : "Visita")}_${slug(parte.aseguradora) || "Parte"}_${slug(parte.expediente) || parte.id.slice(0, 8)}${parte.direccion ? "_" + slug(parte.direccion, 28) : ""}${parte.poblacion ? "_" + slug(parte.poblacion, 20) : ""}.pdf`;
   return { blob: doc.output("blob"), nombre: nombreArchivo };
+}
+
+// Trozo de nombre de archivo seguro (sin tildes ni espacios): "C/ Doctor Muñoz, 20" → "C-Doctor-Munoz-20"
+export function slug(t, max = 40) {
+  return String(t || "").normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^A-Za-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, max).replace(/-+$/, "");
 }
 
 // ---- Relación mensual de trabajos terminados (para facturar a MULTIBETT)
@@ -246,16 +251,33 @@ export function generarRelacion(filas, titulo, destino = "", ivaPct = 0) {
     doc.setTextColor(20); y = 33;
   };
   const cols = [
-    { t: "Terminado", w: 22 }, { t: "Aseguradora", w: 30 }, { t: "Expediente", w: 30 }, { t: "Encargo", w: 24 },
-    { t: "Cliente", w: 58 }, { t: "Población", w: 38 }, { t: "Trabajo", w: 51 }, { t: "Importe", w: 20, r: true },
+    { t: "Terminado", w: 19 }, { t: "Aseguradora", w: 24 }, { t: "Expediente", w: 25 }, { t: "Encargo", w: 19 },
+    { t: "Cliente", w: 38 }, { t: "Dirección / Población", w: 48 }, { t: "Código", w: 16 }, { t: "Trabajo", w: 64 }, { t: "Importe", w: 20, r: true },
   ];
+  const IC = 6, IT = 7;   // columnas de código y trabajo: una línea por código
   const xs = []; let xx = M; cols.forEach((c) => { xs.push(xx); xx += c.w; });
+  // vals[IC] y vals[IT] pueden ser listas: cada código va en su propio renglón, alineado con su descripción
   const fila = (vals, negrita) => {
     doc.setFont("helvetica", negrita ? "bold" : "normal"); doc.setFontSize(8);
-    const partes = vals.map((v, i) => doc.splitTextToSize(String(v ?? ""), cols[i].w - 2));
-    const h = Math.max(...partes.map((p) => p.length)) * 3.6 + 2;
+    const LH = 3.6;
+    const partir = (v, i) => doc.splitTextToSize(String(v ?? ""), cols[i].w - 2);
+    const partes = vals.map((v, i) => (i === IC || i === IT) ? null : partir(v, i));
+    const cods = Array.isArray(vals[IC]) ? vals[IC] : [vals[IC]];
+    const trabs = Array.isArray(vals[IT]) ? vals[IT] : [vals[IT]];
+    const sub = cods.map((c, k) => { const a = partir(c, IC), b = partir(trabs[k], IT); return { a, b, n: Math.max(a.length, b.length, 1) }; });
+    const nSub = sub.reduce((t, x) => t + x.n, 0);
+    const h = Math.max(nSub, ...partes.filter(Boolean).map((p) => p.length)) * LH + 2 + (sub.length - 1) * 1;
     if (y + h > ALTO - 14) { doc.addPage(); cab(); cabecera(); }
-    partes.forEach((p, i) => cols[i].r ? doc.text(p, xs[i] + cols[i].w - 1, y, { align: "right" }) : doc.text(p, xs[i] + 1, y));
+    partes.forEach((p, i) => { if (!p) return; cols[i].r ? doc.text(p, xs[i] + cols[i].w - 1, y, { align: "right" }) : doc.text(p, xs[i] + 1, y); });
+    let yy = y;
+    sub.forEach((x, k) => {
+      if (k) { doc.setDrawColor(241, 245, 249); doc.line(xs[IC], yy - 2.8, xs[IT] + cols[IT].w, yy - 2.8); }
+      if (!negrita) doc.setFont("helvetica", "bold");
+      doc.text(x.a, xs[IC] + 1, yy);
+      doc.setFont("helvetica", negrita ? "bold" : "normal");
+      doc.text(x.b, xs[IT] + 1, yy);
+      yy += x.n * LH + 1;
+    });
     y += h; doc.setDrawColor(226, 232, 240); doc.line(M, y - 2.5, W - M, y - 2.5);
   };
   const cabecera = () => {
@@ -266,7 +288,11 @@ export function generarRelacion(filas, titulo, destino = "", ivaPct = 0) {
   let total = 0;
   for (const f of filas) {
     total += Number(f.importe) || 0;
-    fila([fFecha(f.realizado_at), f.aseguradora, f.expediente, f.num_encargo, f.nombre, f.poblacion, f.trabajo, fEuros(f.importe)]);
+    const ls = (f.lineas || []).length ? f.lineas : [{ codigo: "", descripcion: f.trabajo }];
+    const cant = (l) => (Number(l.cantidad) && Number(l.cantidad) !== 1 ? `${Number(l.cantidad).toLocaleString("es-ES")} × ` : "");
+    const lugar = [f.direccion, [f.codigo_postal, f.poblacion].filter(Boolean).join(" ")].filter(Boolean).join("\n");
+    fila([fFecha(f.realizado_at), f.aseguradora, f.expediente, f.num_encargo, f.nombre, lugar,
+      ls.map((l) => l.codigo || ""), ls.map((l) => cant(l) + (l.descripcion || "")), fEuros(f.importe)]);
   }
   if (y + 26 > ALTO - 14) { doc.addPage(); cab(); }
   const iva = Math.round(total * ivaPct) / 100;
