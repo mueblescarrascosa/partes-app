@@ -525,7 +525,7 @@ async function copiaSeguridad() {
       const hojaPartes = partes.map((p) => ({
         Aseguradora: p.aseguradora, Expediente: p.expediente, "Nº encargo": p.num_encargo, "Nº siniestro": p.num_siniestro, Póliza: p.poliza,
         Estado: estadoInfo(p.estado).nombre, "En papelera": p.borrado_at ? "Sí" : "", Repetido: p.repetido_de ? "Sí" : "",
-        Nombre: p.nombre, Teléfono: p.telefono, "Teléfono 2": p.telefono2, Dirección: p.direccion, CP: p.codigo_postal, Población: p.poblacion,
+        Nombre: p.nombre, Teléfono: p.telefono, "Teléfono 2": p.telefono2, Perjudicado: p.perjudicado_nombre || "", "Tel. perjudicado": p.perjudicado_telefono || "", Dirección: p.direccion, CP: p.codigo_postal, Población: p.poblacion,
         Provincia: p.provincia, Zona: zonaDe(p), Tipo: esConexion(p) ? "Conexión" : "Seguro", Avería: p.averia, Tramitador: p.tramitador_nombre, "Tel. tramitador": p.tramitador_telefono,
         "Fecha encargo": p.fecha_encargo, Cita: p.fecha_cita ? fFechaHora(p.fecha_cita) : "", Asignado: nombre(p.asignado_a),
         ...(precios ? { "Valorado (€)": p.importe_valorado, "Autorizado (€)": p.importe_autorizado } : {}),
@@ -1037,7 +1037,7 @@ function elegirParteParaFotos(imgs) {
 const CAMPOS_TXT = {
   expediente: "expediente", num_encargo: "nº encargo", num_siniestro: "nº siniestro", poliza: "póliza", fecha_encargo: "fecha encargo",
   nombre: "nombre", direccion: "dirección", codigo_postal: "C.P.", poblacion: "población", provincia: "provincia",
-  telefono: "teléfono", telefono2: "teléfono 2", averia: "avería", tramitador_nombre: "tramitador",
+  telefono: "teléfono", telefono2: "teléfono 2", perjudicado_nombre: "perjudicado", perjudicado_telefono: "teléfono del perjudicado", averia: "avería", tramitador_nombre: "tramitador",
   tramitador_telefono: "tel. tramitador", tramitador_email: "email tramitador",
 };
 const normRef = (x) => String(x ?? "").replace(/[\s.\-\/]/g, "").toUpperCase();
@@ -1183,7 +1183,7 @@ async function actualizarExistente(pid, f) {
 
 // ------------------------------------------------------------------ Subida de varios partes (lote)
 const CAMPOS_PARTE = ["aseguradora", "expediente", "num_encargo", "num_siniestro", "poliza", "fecha_encargo", "nombre", "direccion",
-  "codigo_postal", "poblacion", "provincia", "telefono", "telefono2", "averia", "tramitador_nombre", "tramitador_telefono", "tramitador_email"];
+  "codigo_postal", "poblacion", "provincia", "telefono", "telefono2", "perjudicado_nombre", "perjudicado_telefono", "averia", "tramitador_nombre", "tramitador_telefono", "tramitador_email"];
 const MAX_LOTE = 20;
 
 // ---- La tanda en curso se guarda en el móvil (IndexedDB): si se sale sin querer o se cierra la app, se puede recuperar
@@ -1345,6 +1345,7 @@ function editarItemLote(it) {
       <div class="dos">${c("expediente", "Nº expediente")}${c("num_encargo", "Nº encargo")}</div>
       ${c("nombre", "Nombre")}
       <div class="dos">${c("telefono", "Teléfono", "tel")}${c("telefono2", "Teléfono 2", "tel")}</div>
+      <div class="dos">${c("perjudicado_nombre", "Perjudicado")}${c("perjudicado_telefono", "Tel. perjudicado", "tel")}</div>
       ${c("direccion", "Dirección")}
       <div class="dos">${c("codigo_postal", "C.P.")}${c("poblacion", "Población")}</div>
       <label>Avería<textarea name="averia" rows="3">${esc(d.averia ?? "")}</textarea></label>
@@ -1405,7 +1406,7 @@ function detectarTipo(r) {
 
 // Campos que se guardan siempre en MAYÚSCULAS (la base de datos también lo fuerza)
 const CAMPOS_MAYUS = ["expediente", "num_encargo", "num_siniestro", "poliza", "codigo_postal", "averia"];
-const CAMPOS_TITULO = ["nombre", "direccion", "poblacion", "provincia", "tramitador_nombre"];
+const CAMPOS_TITULO = ["nombre", "direccion", "poblacion", "provincia", "tramitador_nombre", "perjudicado_nombre"];
 const PARTICULAS = new Set(["de", "del", "la", "las", "los", "el", "y", "e"]);
 // "MARIA DEL MAR VILCHEZ" → "Maria del Mar Vilchez"; "CL ADARVES BAJOS 37 3a" → "Cl Adarves Bajos 37 3A"
 const tipoTitulo = (t) => String(t).trim().split(/\s+/).map((w, i) => {
@@ -1433,7 +1434,7 @@ function normalizar(d = {}) {
   for (const k of ["expediente", "num_encargo", "num_siniestro", "poliza"]) {
     if (/^\d{1,3}(\.\d{3})+$/.test(r[k] || "")) r[k] = r[k].replace(/\./g, "");
   }
-  for (const k of ["telefono", "telefono2", "tramitador_telefono"]) {
+  for (const k of ["telefono", "telefono2", "perjudicado_telefono", "tramitador_telefono"]) {
     if (r[k] && /^[\d\s.\-+]+$/.test(r[k])) r[k] = r[k].replace(/[\s.\-]/g, "");
     if (/^(\+|00)34\d{9}$/.test(r[k] || "")) r[k] = r[k].replace(/^(\+|00)34/, "");
   }
@@ -1441,7 +1442,7 @@ function normalizar(d = {}) {
   const telOK = (t) => /^(\+?34)?[6-9]\d{8}$/.test(t || "");
   const enTexto = [...new Set(((r.averia || "").match(/(?<!\d)[6-9](?:[\s.]?\d){8}(?!\d)/g) || [])
     .map((t) => t.replace(/[\s.]/g, "")))]
-    .filter((t) => ![r.tramitador_telefono, CFG.DESTINO_INFORMES?.telefono, r.expediente, r.num_encargo, r.num_siniestro, r.poliza]
+    .filter((t) => ![r.tramitador_telefono, r.perjudicado_telefono, CFG.DESTINO_INFORMES?.telefono, r.expediente, r.num_encargo, r.num_siniestro, r.poliza]
       .some((x) => x && String(x).replace(/\D/g, "") === t));
   if (!telOK(r.telefono)) {
     if (enTexto.length) r.telefono = enTexto.shift();
@@ -1501,6 +1502,7 @@ async function vistaFormulario(id) {
         : ""}
       ${!id && S.borrador?.archivo ? avisosLectura(p).map((t) => `<p class="aviso-campo">⚠️ ${esc(t)}: revísalo con el papel.</p>`).join("") : ""}
       <div class="dos">${campo("telefono", "Teléfono", "tel")}${campo("telefono2", "Teléfono 2", "tel")}</div>
+      <div class="dos">${campo("perjudicado_nombre", "Perjudicado (tercero)")}${campo("perjudicado_telefono", "Tel. perjudicado", "tel")}</div>
       ${campo("direccion", "Dirección")}
       <div class="tres">${campo("codigo_postal", "C.P.", "text", 'inputmode="numeric"')}${campo("poblacion", "Población")}${campo("provincia", "Provincia")}</div>
     </div>
@@ -1633,6 +1635,7 @@ async function vistaParte(id) {
       <button class="accion ${p.telefono ? "" : "off"}" id="aContacto">${I.user}<span>Contacto</span></button>
     </div>
     ${p.telefono2 ? `<div class="tel2">Tel. 2: <a href="${linkLlamar(p.telefono2)}">llamar</a> · <a href="${linkWhatsApp(p.telefono2, msgCliente)}" target="_blank" rel="noopener">WhatsApp</a></div>` : ""}
+    ${p.perjudicado_nombre || p.perjudicado_telefono ? `<div class="tel2 perj">👤 Perjudicado: <b>${esc(p.perjudicado_nombre || "sin nombre")}</b>${p.perjudicado_telefono ? ` · ${esc(p.perjudicado_telefono)} · <a href="${linkLlamar(p.perjudicado_telefono)}">llamar</a> · <a href="${linkWhatsApp(p.perjudicado_telefono, "")}" target="_blank" rel="noopener">WhatsApp</a>` : ""}</div>` : ""}
   </section>
 
   <section class="tarjeta">
@@ -1823,9 +1826,9 @@ function pintarBocetos(p) {
 async function pintarFotos(p) {
   pintarBocetos(p);
   const cont = $("#fotos");
-  const fotos = fotosDe(p);
+  const fotos = fotosDe(p).sort((x, y) => (y.tipo === "firmado") - (x.tipo === "firmado"));   // el parte firmado, el primero
   if (!fotos.length) return;
-  const etiquetas = { antes: "Antes", despues: "Después", otra: "" };
+  const etiquetas = { antes: "Antes", despues: "Después", firmado: "📄 Parte firmado", otra: "" };
   cont.innerHTML = fotos.map((f) => `
     <figure data-id="${f.id}"><img alt="" loading="lazy"><figcaption>${etiquetas[f.tipo] || ""}</figcaption>
       <button class="borrar-foto" aria-label="Borrar foto">${I.x}</button></figure>`).join("");
@@ -1859,6 +1862,11 @@ async function pintarFotos(p) {
 }
 
 async function subirFotos(p, files, tipo) {
+  if (tipo === "firmado") {   // solo hay un parte firmado: el nuevo sustituye al anterior
+    files = files.slice(0, 1);
+    const previos = (p.fotos || []).filter((f) => f.tipo === "firmado");
+    for (const f of previos) await api.borrarFoto(f).catch(() => {});
+  }
   let n = 0;
   for (const file of files) {
     cargando(true, `Subiendo foto ${++n} de ${files.length}…`);
@@ -1873,7 +1881,7 @@ function sheetFotos(p) {
   const s = abrirSheet(`
     <h2>Añadir fotos</h2>
     <div class="seg" id="tipoFoto">
-      ${[["antes", "Antes"], ["despues", "Después"], ["otra", "Otra"]].map(([v, n]) => `<button type="button" data-v="${v}" class="${v === tipoDef ? "on" : ""}">${n}</button>`).join("")}
+      ${[["antes", "Antes"], ["despues", "Después"], ["firmado", "Parte firmado"], ["otra", "Otra"]].map(([v, n]) => `<button type="button" data-v="${v}" class="${v === tipoDef ? "on" : ""}">${n}</button>`).join("")}
     </div>
     <div class="lista-botones">
       <label class="btn grande">${I.cam}<span><b>Hacer foto</b></span><input type="file" accept="image/*" capture="environment" hidden id="fCam"></label>
@@ -1881,7 +1889,10 @@ function sheetFotos(p) {
       <button class="btn texto ancho" data-cerrar>Cancelar</button>
     </div>`);
   let tipo = tipoDef;
-  $$("#tipoFoto button", s).forEach((b) => b.onclick = () => { tipo = b.dataset.v; $$("#tipoFoto button", s).forEach((x) => x.classList.toggle("on", x === b)); });
+  $$("#tipoFoto button", s).forEach((b) => b.onclick = () => {
+    tipo = b.dataset.v; $$("#tipoFoto button", s).forEach((x) => x.classList.toggle("on", x === b));
+    $("#fGal", s).multiple = tipo !== "firmado";
+  });
   const alElegir = async (ev) => {
     const files = [...ev.target.files]; if (!files.length) return;
     cerrarSheet();
@@ -2057,6 +2068,7 @@ function sheetFase(p, destino) {
       ${destino === "autorizado" ? `<label class="precio">Importe autorizado (€)<input type="number" step="0.01" inputmode="decimal" name="importe_autorizado" value="${(p.lineas_autorizadas || []).length ? totalesLineas(p.lineas_autorizadas).base : (p.importe_autorizado ?? p.importe_valorado ?? "")}"></label>` : ""}
       ${destino === "visitado" ? `<label class="btn ancho">${I.cam} Fotos de antes (opcional)<input type="file" accept="image/*" multiple hidden name="fotos" data-tipo="antes"></label><small class="suave" id="nFotos"></small>` : ""}
       ${destino === "realizado" ? `<a class="btn ancho" href="#/lineas/${p.id}/realizados">📋 ${(p.lineas_realizadas || []).length ? "Revisar" : "Anotar"} trabajos realizados (códigos)</a>
+        <label class="btn ancho primario">📄 Foto del parte firmado<input type="file" accept="image/*" capture="environment" hidden name="firmado"></label><small class="suave" id="nFirmado">${firmadoDe(p) ? "Ya hay un parte firmado; si haces otra foto se sustituye." : "Una sola foto. Irá la primera al enviar el trabajo terminado."}</small>
         <label class="btn ancho">${I.cam} Fotos del trabajo terminado<input type="file" accept="image/*" multiple hidden name="fotos" data-tipo="despues"></label><small class="suave" id="nFotos"></small>
         <div class="firma-caja"><div class="h3-fila"><b>Firma del cliente</b><button type="button" class="btn texto peq" id="limpiarFirma">Borrar</button></div>
           <canvas id="firma"></canvas><small class="suave">${p.firma_path ? "Ya hay una firma guardada; si firmas de nuevo se sustituye." : "Opcional. Pide al cliente que firme con el dedo."}</small></div>` : ""}
@@ -2066,6 +2078,8 @@ function sheetFase(p, destino) {
       </div>
     </form>`);
   const inFotos = $("input[name=fotos]", s);
+  const inFirmado = $("input[name=firmado]", s);
+  inFirmado?.addEventListener("change", () => { if (inFirmado.files.length) $("#nFirmado", s).textContent = "✅ Parte firmado listo para guardar"; });
   inFotos?.addEventListener("change", () => { $("#nFotos", s).textContent = `${inFotos.files.length} foto(s) seleccionada(s)`; });
   let firma = null;
   if (destino === "realizado") {
@@ -2085,10 +2099,12 @@ function sheetFase(p, destino) {
     if (f.has("importe_valorado")) cambios.importe_valorado = f.get("importe_valorado") === "" ? null : Number(f.get("importe_valorado"));
     if (f.has("importe_autorizado")) cambios.importe_autorizado = f.get("importe_autorizado") === "" ? null : Number(f.get("importe_autorizado"));
     const fotos = inFotos ? [...inFotos.files] : [];
+    const firmadoFile = inFirmado?.files[0] || null;
     const firmaBlob = firma && !firma.vacio ? await firma.aBlob() : null;
     cerrarSheet();
     try {
       await conCarga("Guardando…", async () => {
+        if (firmadoFile) await subirFotos(p, [firmadoFile], "firmado");
         if (fotos.length) await subirFotos(p, fotos, inFotos.dataset.tipo);
         if (firmaBlob) cambios.firma_path = await api.subirArchivo(`${p.id}/firma.png`, firmaBlob, "image/png");
         cargando(true, "Guardando…");
@@ -2147,11 +2163,13 @@ function textoInforme(p, conPrecios) {
   return L.join("\n").trim();
 }
 
+const firmadoDe = (p) => (p.fotos || []).filter((f) => f.tipo === "firmado").at(-1) || null;
 function fotosParaEnvio(p) {
-  const fotos = fotosDe(p);   // los bocetos son internos: nunca se envían
+  const fotos = fotosDe(p).filter((f) => f.tipo !== "firmado");   // los bocetos son internos: nunca se envían
   if (p.estado === "realizado") {
     const desp = fotos.filter((f) => f.tipo === "despues");
-    return desp.length ? desp : fotos;
+    const firmado = firmadoDe(p);
+    return [...(firmado ? [firmado] : []), ...(desp.length ? desp : fotos)];   // el parte firmado, siempre el primero
   }
   return fotos.filter((f) => f.tipo !== "despues");
 }
@@ -2205,7 +2223,7 @@ async function enviarMensaje(p, precios, fotosSel) {
     <h2>Mensaje para ${esc(quien)}</h2>
     <textarea id="txtMsg" rows="10">${esc(texto)}</textarea>
     <div class="lista-botones">
-      ${puedeFotos ? `<button class="btn primario grande" id="msgFotos" style="--c:#16a34a">${I.wa}<span><b>Enviar texto + ${files.length} foto${files.length > 1 ? "s" : ""}</b><small>Elige WhatsApp y luego ${esc(aQuien(quien))}</small></span></button>` : ""}
+      ${puedeFotos ? `<button class="btn primario grande" id="msgFotos" style="--c:#16a34a">${I.wa}<span><b>Enviar ${files.length} foto${files.length > 1 ? "s" : ""} + texto</b><small>Van juntas en un grupo. El texto se copia: pégalo una vez en «Añade un comentario»</small></span></button>` : ""}
       ${tel ? `<button class="btn grande" id="msgSolo">${I.wa}<span><b>${puedeFotos ? "Solo el texto" : "Enviar por WhatsApp"}</b><small>Abre el chat ${esc(quien.startsWith("el ") ? "del " + quien.slice(3) : "de " + quien)} con el mensaje escrito</small></span></button>` : ""}
       <button class="btn grande" id="msgCopiar">📋<span><b>Copiar texto</b><small>Para pegarlo donde quieras</small></span></button>
       <button class="btn texto ancho" data-cerrar>Cerrar</button>
@@ -2213,7 +2231,13 @@ async function enviarMensaje(p, precios, fotosSel) {
     ${files.length && !puedeFotos ? '<p class="suave">Este navegador no deja adjuntar fotos directamente: envía el texto y adjunta las fotos desde la galería.</p>' : ""}`);
   const txt = () => $("#txtMsg", s).value;
   $("#msgFotos", s)?.addEventListener("click", async () => {
-    try { await navigator.clipboard?.writeText(txt()).catch(() => {}); await navigator.share({ files, text: txt() }); }
+    // Sin "text": si se pasa, WhatsApp lo repite en cada foto. Las fotos van en grupo y el texto se pega una sola vez.
+    try {
+      let copiado = false;
+      try { await navigator.clipboard.writeText(txt()); copiado = true; } catch { /* sin permiso */ }
+      toast(copiado ? "Texto copiado: en WhatsApp mantén pulsado «Añade un comentario» y pega" : "No se pudo copiar el texto: usa luego «Solo el texto»", copiado ? "ok" : "error");
+      await navigator.share({ files });
+    }
     catch (e) { if (e.name !== "AbortError") toast("No se pudo compartir: " + e.message, "error"); }
   });
   $("#msgSolo", s)?.addEventListener("click", () => { location.href = linkWhatsApp(tel, txt()); });

@@ -172,7 +172,7 @@ export async function generarInforme(parte, api, miembros = [], opc = {}) {
   // ---- Fotos
   const fotos = parte.fotos ?? [];
   if (fotos.length) {
-    const grupos = [["antes", "Fotos antes"], ["despues", "Fotos después"], ["otra", "Otras fotos"]];
+    const grupos = [["firmado", "Parte firmado"], ["antes", "Fotos antes"], ["despues", "Fotos después"], ["otra", "Otras fotos"]];
     for (const [tipo, nombre] of grupos) {
       const lista = fotos.filter((f) => (f.tipo || "otra") === tipo);
       if (!lista.length) continue;
