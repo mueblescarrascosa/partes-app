@@ -31,6 +31,8 @@ Extrae los datos del documento y responde ÚNICAMENTE con un objeto JSON, sin te
   "provincia": "",
   "telefono": "teléfono principal de contacto del asegurado (9 cifras)",
   "telefono2": "otro teléfono del asegurado si hay",
+  "perjudicado_nombre": "nombre del PERJUDICADO o tercero afectado (p.ej. el vecino de abajo al que le ha caído el agua), SOLO si el parte lo identifica como perjudicado/tercero/contrario/afectado. NO es el asegurado. null si no aparece",
+  "perjudicado_telefono": "teléfono del perjudicado o tercero (9 cifras), solo si el parte indica que es suyo. null si no aparece",
   "averia": "descripción clara del daño o avería y del trabajo encargado (causa, estancia afectada, gremio)",
   "tramitador_nombre": "nombre del tramitador/gestor de la compañía",
   "tramitador_telefono": "teléfono del tramitador",
@@ -70,6 +72,7 @@ Reglas:
 - NOTAS A MANO: los partes suelen tener anotaciones a bolígrafo hechas por el taller ("Albañil no ha comenzado", "Llamado 18/09 a las 9", "Vivimos 10", "Tf. albañil 607...", etc.). NO son datos del encargo: no las metas en averia y nunca uses esos teléfonos (de albañil, pintor u otros gremios) como teléfono del cliente. EXCEPCIÓN: si a mano se ha CORREGIDO o COMPLETADO un dato del cliente (un nombre escrito encima de "VECINO", el piso/puerta añadido a la dirección como "2ºA"), usa la corrección.
 - OTRAS COMPAÑÍAS EN EL TEXTO: a veces la descripción cita la póliza o el expediente de OTRA compañía (p.ej. un parte de Iris Global que dice "POL 0762200017150 Mapfre exp V70261021 CCPP", datos de la comunidad de propietarios). Eso NO cambia la aseguradora ni el expediente: la compañía es la del logo/cabecera y el expediente, el de su campo. Déjalo en averia como información.
 - EÑES PERDIDAS: algunos sistemas imprimen la Ñ como espacio o símbolo ("MU OZ", "ESPA/A", "CASTA O"). Escríbelo bien: MUÑOZ, ESPAÑA, CASTAÑO.
+- PERJUDICADO / TERCERO: algunos partes traen, además del asegurado, los datos de un perjudicado (casillas o textos como "Perjudicado", "Tercero", "Contrario", "Afectado", "Vecino perjudicado", "Datos del perjudicado", "Tlf. perjudicado"). Esos datos van SOLO en perjudicado_nombre y perjudicado_telefono: nunca en nombre, telefono ni telefono2. Si el trabajo se hace en casa del perjudicado, igualmente nombre = asegurado. Si no hay perjudicado, ambos null.
 - MAPFRE escribe el nombre como "APELLIDOS,NOMBRE" ("ARAGON GOMEZ,ALBA MARIA"): devuélvelo como "ALBA MARIA ARAGON GOMEZ".
 - Fechas en formato AAAA-MM-DD; en España las fechas del documento van como DD/MM/AAAA. Copia el día cifra a cifra tal como está escrito; no uses la fecha de hoy ni la calcules.`;
 
