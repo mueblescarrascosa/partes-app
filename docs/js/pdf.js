@@ -137,9 +137,10 @@ export async function generarInforme(parte, api, miembros = [], opc = {}) {
     y += 3;
   }
 
-  // ---- Fases (en un presupuesto para el cliente no se ponen el seguimiento ni las notas internas)
+  // ---- Seguimiento y observaciones: son internos, no salen en ningún PDF (ni a MULTIBETT ni al cliente)
   const ev = parte.eventos ?? [];
-  if (!cx) {
+  const CON_SEGUIMIENTO = false;
+  if (CON_SEGUIMIENTO && !cx) {
   titulo("Seguimiento");
   for (const e of ESTADOS) {
     const ult = [...ev].reverse().find((x) => x.estado === e.id);
