@@ -398,3 +398,6 @@ body.sin-scroll { overflow: hidden; }
 .boceto-lienzo { flex: 1; display: grid; place-items: center; overflow: hidden; min-height: 0; padding: 6px; }
 .boceto-lienzo canvas { background: #fff; box-shadow: 0 4px 20px rgba(0,0,0,.35); touch-action: none; }
 .boceto-mini img { background: #fff; object-fit: contain !important; }
+
+/* Selección de fotos al enviar el trabajo terminado */
+.fotos-envio{display:grid;gap:.35em;margin:.4em 0 .9em;padding:.7em .8em;border:1px solid var(--borde,#e2e8f0);border-radius:12px}
