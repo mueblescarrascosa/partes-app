@@ -2164,12 +2164,16 @@ function textoInforme(p, conPrecios) {
 }
 
 const firmadoDe = (p) => (p.fotos || []).filter((f) => f.tipo === "firmado").at(-1) || null;
-function fotosParaEnvio(p) {
+// Grupos de fotos que se pueden mandar con el trabajo terminado, en este orden: parte firmado, antes, después, otras
+const GRUPOS_ENVIO = [["firmado", "Parte firmado"], ["antes", "Fotos del antes"], ["despues", "Fotos del después"], ["otra", "Otras fotos"]];
+function fotosParaEnvio(p, sel) {
   const fotos = fotosDe(p).filter((f) => f.tipo !== "firmado");   // los bocetos son internos: nunca se envían
   if (p.estado === "realizado") {
-    const desp = fotos.filter((f) => f.tipo === "despues");
     const firmado = firmadoDe(p);
-    return [...(firmado ? [firmado] : []), ...(desp.length ? desp : fotos)];   // el parte firmado, siempre el primero
+    const de = { firmado: firmado ? [firmado] : [], antes: fotos.filter((f) => f.tipo === "antes"),
+      despues: fotos.filter((f) => f.tipo === "despues"), otra: fotos.filter((f) => !["antes", "despues"].includes(f.tipo)) };
+    if (!sel) return de;
+    return GRUPOS_ENVIO.flatMap(([k]) => (sel[k] ? de[k] : []));
   }
   return fotos.filter((f) => f.tipo !== "despues");
 }
@@ -2178,7 +2182,13 @@ async function flujoInforme(pIn) {
   cerrarSheet();
   let p;
   try { p = await conCarga("Preparando…", () => api.obtenerParte(pIn.id)); } catch { return; }
-  const fotos = fotosParaEnvio(p);
+  const final = p.estado === "realizado";
+  // En el trabajo terminado se elige qué fotos van (se recuerda la última elección)
+  const grupos = final ? fotosParaEnvio(p) : null;
+  let sel = { firmado: true, antes: true, despues: true, otra: false };
+  try { Object.assign(sel, JSON.parse(sessionGet("fotosEnvio") || "{}")); } catch { /* por defecto */ }
+  let fotos = final ? fotosParaEnvio(p, sel) : fotosParaEnvio(p);
+  const textoMsg = () => `Texto escrito${fotos.length ? ` y ${fotos.length} foto${fotos.length > 1 ? "s" : ""} adjunta${fotos.length > 1 ? "s" : ""}` : " (sin fotos)"}`;
   const hayLineas = (p.lineas_valoracion || []).length || (p.lineas_realizadas || []).length || p.importe_valorado != null;
   let precios = verPrecios() && (esConexion(p) || sessionGet("precios") !== "0");
   const tipoInf = p.estado === "realizado" ? "trabajo terminado" : (esConexion(p) ? "presupuesto" : "visita");
@@ -2187,9 +2197,11 @@ async function flujoInforme(pIn) {
     ${esConexion(p) && !p.telefono ? '<p class="aviso-campo">⚠️ Este parte no tiene teléfono del cliente.</p>' : ""}
     ${hayLineas && verPrecios() ? `<label class="check"><input type="checkbox" id="conPrecios" ${precios ? "checked" : ""}> Incluir precios en ${esConexion(p) ? "el presupuesto" : "la valoración"}</label>
     <p class="suave" id="txtPrecios">${precios ? "Códigos, cantidades, precios y total." : "Solo códigos, descripción y cantidades (sin precios ni total)."}</p>` : ""}
+    ${final && GRUPOS_ENVIO.some(([k]) => grupos[k].length) ? `<div class="fotos-envio"><b>Fotos que van en el mensaje</b> <small class="suave">(en este orden)</small>
+      ${GRUPOS_ENVIO.filter(([k]) => grupos[k].length).map(([k, n]) => `<label class="check"><input type="checkbox" data-grupo="${k}" ${sel[k] ? "checked" : ""}> ${n} (${grupos[k].length})</label>`).join("")}</div>` : ""}
     <div class="lista-botones">
       <button class="btn primario grande" id="envPDF" style="--c:#16a34a">${I.pdf}<span><b>PDF</b><small>Informe completo en un archivo PDF</small></span></button>
-      <button class="btn grande" id="envMsg">${I.wa}<span><b>Mensaje + fotos</b><small>Texto escrito${fotos.length ? ` y ${fotos.length} foto${fotos.length > 1 ? "s" : ""} adjunta${fotos.length > 1 ? "s" : ""}` : " (este parte no tiene fotos)"}</small></span></button>
+      <button class="btn grande" id="envMsg">${I.wa}<span><b>Mensaje + fotos</b><small id="txtMsgFotos">${textoMsg()}</small></span></button>
       <button class="btn texto ancho" data-cerrar>Cerrar</button>
     </div>`);
   $("#conPrecios", s)?.addEventListener("change", (e) => {
@@ -2197,6 +2209,10 @@ async function flujoInforme(pIn) {
     $("#txtPrecios", s).textContent = precios ? "Códigos, cantidades, precios y total." : "Solo códigos, descripción y cantidades (sin precios ni total).";
   });
   $("#envPDF", s).onclick = () => enviarPDF(p, precios);
+  $$(".fotos-envio input", s).forEach((c) => c.addEventListener("change", () => {
+    sel[c.dataset.grupo] = c.checked; sessionSet("fotosEnvio", JSON.stringify(sel));
+    fotos = fotosParaEnvio(p, sel); $("#txtMsgFotos", s).textContent = textoMsg();
+  }));
   $("#envMsg", s).onclick = () => enviarMensaje(p, precios, fotos);
 }
 
