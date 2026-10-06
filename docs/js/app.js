@@ -631,6 +631,56 @@ function importeParte(p) {
   return null;
 }
 const diaAISO = (d) => (d ? new Date(`${d}T12:00:00`).toISOString() : null);
+// Día en que se hizo una foto: fecha EXIF de la cámara (DateTimeOriginal) o, si no la tiene, la fecha del archivo
+async function fechaDeFoto(file) {
+  try {
+    const v = new DataView(await file.slice(0, 256 * 1024).arrayBuffer());
+    if (v.getUint16(0) === 0xFFD8) {
+      for (let o = 2; o < v.byteLength - 4;) {
+        const marca = v.getUint16(o), largo = v.getUint16(o + 2);
+        if (marca === 0xFFE1 && v.getUint32(o + 4) === 0x45786966) {   // "Exif"
+          const t = o + 10, le = v.getUint16(t) === 0x4949;
+          const u16 = (x) => v.getUint16(t + x, le), u32 = (x) => v.getUint32(t + x, le);
+          const buscar = (ifd, tag) => { const n = u16(ifd); for (let i = 0; i < n; i++) { const e = ifd + 2 + i * 12; if (u16(e) === tag) return u32(e + 8); } return null; };
+          const ifd0 = u32(4), exif = buscar(ifd0, 0x8769);
+          const off = (exif && buscar(exif, 0x9003)) || buscar(ifd0, 0x0132);
+          if (off) {
+            const txt = String.fromCharCode(...new Uint8Array(v.buffer, t + off, 10));   // "AAAA:MM:DD"
+            if (/^\d{4}:\d{2}:\d{2}$/.test(txt)) return txt.replace(/:/g, "-");
+          }
+          break;
+        }
+        if ((marca & 0xFF00) !== 0xFF00) break;
+        o += 2 + largo;
+      }
+    }
+  } catch { /* sin EXIF */ }
+  return file.lastModified ? new Date(file.lastModified).toLocaleDateString("sv-SE") : null;
+}
+
+function sheetFechaRealizado(p, alGuardar) {
+  const hoy = new Date().toLocaleDateString("sv-SE");
+  const s = abrirSheet(`
+    <h2>📅 Fecha del trabajo</h2>
+    <p class="suave">${esc(p.nombre || "")} · ${esc(p.aseguradora || "")} ${esc(p.expediente || "")}</p>
+    <form id="fFechaR" class="form">
+      <label>Día en que se hizo el trabajo<input type="date" name="dia" required value="${new Date(p.realizado_at || Date.now()).toLocaleDateString("sv-SE")}" max="${hoy}"></label>
+      <p class="suave">El parte entra en la facturación del mes de esta fecha.${p.factura_ref ? ` <b>Ojo:</b> ya está en la factura ${esc(p.factura_ref)}.` : ""}</p>
+      <div class="pie-form"><button type="button" class="btn" data-cerrar>Cancelar</button><button type="submit" class="btn primario">Guardar</button></div>
+    </form>`);
+  $("#fFechaR", s).addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    const dia = new FormData(ev.target).get("dia");
+    const realizado_at = diaAISO(dia);
+    cerrarSheet();
+    try {
+      await conCarga("Guardando…", () => api.actualizarParte(p.id, { realizado_at }));
+      p.realizado_at = realizado_at;
+      toast(`Fecha cambiada: cuenta en ${nombreMes(mesDe(realizado_at)).toLowerCase()}`, "ok");
+      alGuardar?.();
+    } catch { /* conCarga avisa */ }
+  });
+}
 const mesDe = (iso) => iso ? new Date(iso).toLocaleDateString("sv-SE").slice(0, 7) : "";
 const nombreMes = (k) => { const [a, m] = k.split("-"); const t = new Date(+a, +m - 1, 1).toLocaleDateString("es-ES", { month: "long", year: "numeric" }); return t.charAt(0).toUpperCase() + t.slice(1); };
 const sumarDias = (fecha, d) => { const x = new Date(fecha + "T12:00:00"); x.setDate(x.getDate() + d); return x; };
@@ -685,7 +735,7 @@ async function vistaFacturacion() {
           const est = p.cobrado_at ? `<em class="ok">Cobrado ${fFecha(p.cobrado_at)}</em>` : p.factura_ref ? `<em>Facturado · ${esc(p.factura_ref)}</em>` : "";
           return `<label class="fact-fila ${p.factura_ref ? "facturado" : ""}">
             <input type="checkbox" data-id="${p.id}" ${sel.has(p.id) ? "checked" : ""}>
-            <span class="fact-info"><b>${esc(p.nombre || "Sin nombre")}</b><small>${fFecha(p.realizado_at)} · ${esc(p.aseguradora || "")} ${esc(p.expediente || "")}${p.poblacion ? " · " + esc(p.poblacion) : ""}</small>${est}</span>
+            <span class="fact-info"><b>${esc(p.nombre || "Sin nombre")}</b><small><button type="button" class="fecha-btn" data-fecha="${p.id}" title="Cambiar la fecha">📅 ${fFecha(p.realizado_at)}</button> · ${esc(p.aseguradora || "")} ${esc(p.expediente || "")}${p.poblacion ? " · " + esc(p.poblacion) : ""}</small>${est}</span>
             <b class="fact-imp ${imp == null ? "sin" : ""}">${imp == null ? "sin importe" : fEuros(imp)}</b></label>`;
         }).join("")}</div>
         <div class="fact-total"><span>${elegidos.length} seleccionados${sinImporte ? ` · <b class="rojo">${sinImporte} sin importe</b>` : ""}</span>
@@ -709,6 +759,10 @@ async function vistaFacturacion() {
           <button class="btn peq texto" data-descobrar="${esc(f.ref)}|${esc(f.fecha || "")}">Deshacer</button></div>`).join("")}
       </section>`;
     $("#fMes").onchange = (e) => { mes = e.target.value; sessionSet("factMes", mes); sel.clear(); pinta(); };
+    $$("#fact .fecha-btn").forEach((b) => b.addEventListener("click", (e) => {
+      e.preventDefault(); e.stopPropagation();
+      const p = term.find((x) => x.id === b.dataset.fecha); if (p) sheetFechaRealizado(p, () => pinta());
+    }));
     $$("#fact .fact-fila input").forEach((c) => c.onchange = () => { c.checked ? sel.add(c.dataset.id) : sel.delete(c.dataset.id); pinta(); });
     const lineasDe = (p) => [p.lineas_autorizadas, p.lineas_realizadas, p.lineas_valoracion].find((l) => (l || []).length) || [];
     const filasExp = () => elegidos.map((p) => ({ ...p, importe: importeParte(p) || 0, lineas: lineasDe(p), autorizado: !(p.lineas_autorizadas || []).length && p.importe_autorizado != null,
@@ -1649,6 +1703,7 @@ async function vistaParte(id) {
         </button>`).join("")}
     </div>
     <div class="estado-actual" style="--c:${e.color}">${chipDias(p, true)} · Estado: <b>${e.nombre}</b>${p.fecha_cita && idx < 2 ? ` · Cita ${fFechaHora(p.fecha_cita)}` : ""}</div>
+    ${p.estado === "realizado" && p.realizado_at ? `<div class="fecha-realizado">Hecho el <b>${fFecha(p.realizado_at)}</b> <button type="button" class="btn peq" id="cambiarFechaR">📅 Cambiar fecha</button></div>` : ""}
     <div class="lista-botones">
       ${sig ? `<button class="btn primario ancho" id="avanzar" style="--c:${sig.color}">Marcar como ${sig.nombre.toLowerCase()} →</button>` : ""}
       ${idx >= idxEstado("visitado") ? `<button class="btn primario ancho" id="informe" style="--c:#16a34a">${I.wa} ${esConexion(p) ? `Enviar ${p.estado === "realizado" ? "trabajo terminado" : "presupuesto"} al cliente` : `Enviar ${p.estado === "realizado" ? "trabajo terminado" : "visita"} a ${esc(DEST.nombre)}`}</button>` : ""}
@@ -1721,6 +1776,7 @@ async function vistaParte(id) {
   $("#avanzar")?.addEventListener("click", () => irAFase(sig.id));
   $("#informe")?.addEventListener("click", () => flujoInforme(p));
   $("#nota").onclick = () => sheetFase(p, null);
+  $("#cambiarFechaR")?.addEventListener("click", () => sheetFechaRealizado(p, () => vistaParte(p.id)));
   $$(".paso").forEach((b) => b.addEventListener("click", () => {
     const dest = b.dataset.estado;
     if (dest === p.estado) return;
@@ -2071,7 +2127,7 @@ function sheetFase(p, destino) {
       ${destino === "autorizado" ? `<label class="precio">Importe autorizado (€)<input type="number" step="0.01" inputmode="decimal" name="importe_autorizado" value="${(p.lineas_autorizadas || []).length ? totalesLineas(p.lineas_autorizadas).base : (p.importe_autorizado ?? p.importe_valorado ?? "")}"></label>` : ""}
       ${destino === "visitado" ? `<label class="btn ancho">${I.cam} Fotos de antes (opcional)<input type="file" accept="image/*" multiple hidden name="fotos" data-tipo="antes"></label><small class="suave" id="nFotos"></small>` : ""}
       ${destino === "realizado" ? `<label>Fecha en que se hizo el trabajo<input type="date" name="realizado_dia" value="${new Date().toLocaleDateString("sv-SE")}" max="${new Date().toLocaleDateString("sv-SE")}"></label>
-        <small class="suave" style="margin-top:-.4em">Si lo hiciste el mes pasado, pon esa fecha: así entra en la facturación de ese mes.</small>
+        <small class="suave" style="margin-top:-.4em" id="nDia">Se pone sola con la fecha de la foto del parte firmado. Decide el mes de la facturación.</small>
         <a class="btn ancho" href="#/lineas/${p.id}/realizados">📋 ${(p.lineas_realizadas || []).length ? "Revisar" : "Anotar"} trabajos realizados (códigos)</a>
         <label class="btn ancho primario">📄 Foto del parte firmado<input type="file" accept="image/*" capture="environment" hidden name="firmado"></label><small class="suave" id="nFirmado">${firmadoDe(p) ? "Ya hay un parte firmado; si haces otra foto se sustituye." : "Una sola foto. Irá la primera al enviar el trabajo terminado."}</small>
         <label class="btn ancho">${I.cam} Fotos del trabajo terminado<input type="file" accept="image/*" multiple hidden name="fotos" data-tipo="despues"></label><small class="suave" id="nFotos"></small>
@@ -2084,8 +2140,18 @@ function sheetFase(p, destino) {
     </form>`);
   const inFotos = $("input[name=fotos]", s);
   const inFirmado = $("input[name=firmado]", s);
-  inFirmado?.addEventListener("change", () => { if (inFirmado.files.length) $("#nFirmado", s).textContent = "✅ Parte firmado listo para guardar"; });
-  inFotos?.addEventListener("change", () => { $("#nFotos", s).textContent = `${inFotos.files.length} foto(s) seleccionada(s)`; });
+  // La fecha del trabajo se toma sola de la foto del parte firmado (o de la última foto del después)
+  const inDia = $("input[name=realizado_dia]", s);
+  const fechaDesdeFotos = async () => {
+    if (!inDia) return;
+    let dia = null, origen = "";
+    if (inFirmado?.files.length) { dia = await fechaDeFoto(inFirmado.files[0]); origen = "del parte firmado"; }
+    else if (inFotos?.files.length) { const ds = (await Promise.all([...inFotos.files].map(fechaDeFoto))).filter(Boolean).sort(); dia = ds.at(-1); origen = "de las fotos"; }
+    const hoy = new Date().toLocaleDateString("sv-SE");
+    if (dia && dia <= hoy) { inDia.value = dia; $("#nDia", s).textContent = `📷 Fecha tomada ${origen} (${fFecha(dia + "T12:00:00")}). Cámbiala si no es correcta.`; }
+  };
+  inFirmado?.addEventListener("change", () => { if (inFirmado.files.length) $("#nFirmado", s).textContent = "✅ Parte firmado listo para guardar"; fechaDesdeFotos(); });
+  inFotos?.addEventListener("change", () => { $("#nFotos", s).textContent = `${inFotos.files.length} foto(s) seleccionada(s)`; fechaDesdeFotos(); });
   let firma = null;
   if (destino === "realizado") {
     firma = panelFirma($("#firma", s));
