@@ -401,3 +401,5 @@ body.sin-scroll { overflow: hidden; }
 
 /* Selección de fotos al enviar el trabajo terminado */
 .fotos-envio{display:grid;gap:.35em;margin:.4em 0 .9em;padding:.7em .8em;border:1px solid var(--borde,#e2e8f0);border-radius:12px}
+.fecha-realizado{margin:.5em 0 .2em;display:flex;align-items:center;gap:.6em;flex-wrap:wrap;font-size:.95em}
+.fecha-btn{border:1px solid var(--borde,#cbd5e1);background:transparent;border-radius:8px;padding:.1em .45em;font:inherit;color:inherit;cursor:pointer}
