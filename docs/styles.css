@@ -421,3 +421,4 @@ body.con-sel .lista { padding-bottom: 90px; }
 .rev-card { display: grid; gap: 8px; }
 .rev-botones { display: grid; grid-template-columns: 2fr 1fr 1fr; gap: 8px; }
 .rev-botones .btn { justify-content: center; }
+.rep-info { display: block; color: #0f766e; font-weight: 600; margin-top: 2px; }
