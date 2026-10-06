@@ -739,10 +739,10 @@ function sheetAltaHecho() {
     for (const k in f) f[k] = String(f[k]).trim() || null;
     const realizado_at = dia === hoyDia() ? new Date().toISOString() : diaAISO(dia);
     // ¿Ya existe ese expediente?
-    const exp = (f.expediente || "").toUpperCase().replace(/\s/g, "");
-    const ya = (S.partes || []).find((p) => !p.borrado_at && (p.expediente || "").toUpperCase().replace(/\s/g, "") === exp && (p.aseguradora || "") === f.aseguradora);
+    const ya = (await buscarRepetidos({ aseguradora: f.aseguradora, expediente: f.expediente })).find((r) => r.fuerte && !r.p.borrado_at)?.p;
     if (ya) {
-      if (!confirm(`Ya tienes el expediente ${f.expediente} (${ya.nombre || "sin nombre"}, ${estadoInfo(ya.estado).nombre.toLowerCase()}). ¿Marcar ese como hecho en vez de crear otro?`)) return;
+      if (ya.estado === "realizado") { alert(`Ya tienes el expediente ${f.expediente} (${ya.nombre || "sin nombre"}): ${infoParte(ya)}.\n\nNo se crea otro.`); return; }
+      if (!confirm(`Ya tienes el expediente ${f.expediente} (${ya.nombre || "sin nombre"}): ${infoParte(ya)}.\n\n¿Marcar ese como hecho en vez de crear otro?`)) return;
       cerrarSheet();
       try { if (ya.estado !== "realizado") await marcarHechos([ya], () => dia); } catch { return; }
       location.hash = `/lineas/${ya.id}/realizados`; return;
@@ -1345,6 +1345,23 @@ async function analizarRepeticion(d) {
   return { orig: c.p, motivo: c.motivo, ...c.cmp };
 }
 
+// Resumen de un parte existente para avisos de repetido: estado, en qué mes está y su importe
+function infoParte(x) {
+  const t = [];
+  if (x.borrado_at) t.push("en la papelera");
+  else if (x.estado === "realizado" && x.realizado_at) {
+    t.push(`terminado en ${nombreMes(mesDe(x.realizado_at)).toLowerCase()}`);
+    if (!esConexion(x)) t.push(x.factura_ref ? `facturado (fra. ${x.factura_ref})` : "sin facturar");
+  } else t.push(`${estadoInfo(x.estado).nombre.toLowerCase()} · entró en ${nombreMes(mesDe(x.created_at)).toLowerCase()}`);
+  if (verPrecios()) {
+    const val = (x.lineas_valoracion || []).length ? totalesLineas(x.lineas_valoracion).base : x.importe_valorado;
+    if (val != null) t.push(`valoración ${fEuros(val)}`);
+    const aut = (x.lineas_autorizadas || []).length ? totalesLineas(x.lineas_autorizadas).base : x.importe_autorizado;
+    if (aut != null) t.push(`autorizado ${fEuros(aut)}`);
+  }
+  return t.join(" · ");
+}
+
 async function avisoRepetido(d) {
   const [rep, todos] = await Promise.all([analizarRepeticion(d), buscarRepetidos(d)]);
   const form = $("#fParte");
@@ -1356,7 +1373,7 @@ async function avisoRepetido(d) {
   div.className = "aviso repetido";
   const filaP = (x, extra) => `
       <div class="rep-fila">
-        <div><b>${esc(x.nombre || "Sin nombre")}</b><small>${esc(x.aseguradora || "")}${x.expediente ? " · " + esc(x.expediente) : ""}${x.num_encargo ? " · enc. " + esc(x.num_encargo) : ""} · ${esc(x.borrado_at ? "en la papelera" : estadoInfo(x.estado).nombre)}${extra ? " — " + esc(extra) : ""}</small></div>
+        <div><b>${esc(x.nombre || "Sin nombre")}</b><small>${esc(x.aseguradora || "")}${x.expediente ? " · " + esc(x.expediente) : ""}${x.num_encargo ? " · enc. " + esc(x.num_encargo) : ""}${extra ? " — " + esc(extra) : ""}</small><small class="rep-info">📌 ${esc(infoParte(x))}</small></div>
         <div class="rep-botones"><button type="button" class="btn" data-abrir="${x.id}">Abrir</button></div>
       </div>`;
   let html = "";
@@ -1514,8 +1531,8 @@ function revisarLote() {
     const clave = normRef(d.aseguradora) + "|" + normRef(d.expediente) + "|" + normRef(d.num_encargo);
     if (d.expediente && vistos.has(clave)) { it.avisos.push({ t: `⛔ Igual que el nº ${vistos.get(clave) + 1} de esta tanda`, grave: true }); if (!it.tocado) it.sel = false; }
     else if (d.expediente) vistos.set(clave, it.i);
-    if (it.rep?.identico) { it.avisos.push({ t: `⛔ Ya lo tienes (${it.rep.orig.nombre || "sin nombre"})`, grave: true }); if (!it.tocado) it.sel = false; }
-    else if (it.rep) it.avisos.push({ t: `🔁 Repetido con cambios: ${it.rep.diffs.map((x) => x.txt).join(", ")}` });
+    if (it.rep?.identico) { it.avisos.push({ t: `⛔ Ya lo tienes (${it.rep.orig.nombre || "sin nombre"} · ${infoParte(it.rep.orig)})`, grave: true }); if (!it.tocado) it.sel = false; }
+    else if (it.rep) it.avisos.push({ t: `🔁 Repetido con cambios (el anterior: ${infoParte(it.rep.orig)}): ${it.rep.diffs.map((x) => x.txt).join(", ")}` });
     if (!d.aseguradora) it.avisos.push({ t: "⚠️ Sin aseguradora" });
     if (!d.expediente) it.avisos.push({ t: "⚠️ Sin expediente" });
     if (!/^(\+?34)?[6-9]\d{8}$/.test(d.telefono || "")) it.avisos.push({ t: "⚠️ Sin teléfono completo" });
@@ -1781,7 +1798,7 @@ async function vistaFormulario(id) {
   if (!id) {
     let tRep;
     $$("#fParte [name=expediente], #fParte [name=num_encargo], #fParte [name=num_siniestro], #fParte [name=aseguradora]").forEach((el) =>
-      el.addEventListener("change", () => { clearTimeout(tRep); tRep = setTimeout(() => avisoRepetido(Object.fromEntries(new FormData($("#fParte")))), 300); }));
+      ["change", "input"].forEach((evn) => el.addEventListener(evn, () => { clearTimeout(tRep); tRep = setTimeout(() => { const fp = $("#fParte"); if (fp) avisoRepetido(Object.fromEntries(new FormData(fp))); }, 500); })));
   }
   $("#fParte").addEventListener("submit", async (e) => {
     e.preventDefault();
@@ -1806,7 +1823,7 @@ async function vistaFormulario(id) {
             }
             return;
           }
-          if (confirm(`Este parte ya lo tienes y es igual (${rep.orig.nombre ?? ""}, ${rep.motivo}). No se guarda otro.\n\n¿Abrir el que ya tienes?`)) {
+          if (confirm(`Este parte ya lo tienes y es igual (${rep.orig.nombre ?? ""}, ${rep.motivo}).\n${infoParte(rep.orig)}\n\nNo se guarda otro.\n\n¿Abrir el que ya tienes?`)) {
             S.borrador = null; S.fotosPendientes = null; location.hash = "/parte/" + rep.orig.id;
           }
           return;
