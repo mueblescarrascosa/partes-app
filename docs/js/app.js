@@ -630,6 +630,7 @@ function importeParte(p) {
   if (p.importe_valorado != null) return Number(p.importe_valorado);
   return null;
 }
+const diaAISO = (d) => (d ? new Date(`${d}T12:00:00`).toISOString() : null);
 const mesDe = (iso) => iso ? new Date(iso).toLocaleDateString("sv-SE").slice(0, 7) : "";
 const nombreMes = (k) => { const [a, m] = k.split("-"); const t = new Date(+a, +m - 1, 1).toLocaleDateString("es-ES", { month: "long", year: "numeric" }); return t.charAt(0).toUpperCase() + t.slice(1); };
 const sumarDias = (fecha, d) => { const x = new Date(fecha + "T12:00:00"); x.setDate(x.getDate() + d); return x; };
@@ -1485,6 +1486,7 @@ async function vistaFormulario(id) {
       <div class="dos">${campo("expediente", "Nº expediente")}${campo("num_encargo", "Nº encargo")}</div>
       <div class="dos">${campo("num_siniestro", "Nº siniestro")}${campo("poliza", "Póliza")}</div>
       ${campo("fecha_encargo", "Fecha de encargo", "date")}
+      ${id && p.realizado_at ? `<label>Fecha en que se hizo el trabajo<input name="realizado_dia" type="date" value="${new Date(p.realizado_at).toLocaleDateString("sv-SE")}" max="${new Date().toLocaleDateString("sv-SE")}"><small class="suave">Decide en qué mes entra en la facturación.</small></label>` : ""}
       <label>Tipo de parte
         <select name="tipo">
           <option value="siniestro" ${esConexion(p) ? "" : "selected"}>Encargo del seguro</option>
@@ -1548,6 +1550,7 @@ async function vistaFormulario(id) {
     const f = aMayus(Object.fromEntries(new FormData(e.target)));
     for (const k in f) if (f[k] === "") f[k] = null;
     if (f.fecha_cita) f.fecha_cita = new Date(f.fecha_cita).toISOString();
+    if ("realizado_dia" in f) { if (f.realizado_dia) f.realizado_at = diaAISO(f.realizado_dia); delete f.realizado_dia; }
     for (const k of ["importe_valorado", "importe_autorizado"]) if (f[k] != null) f[k] = Number(String(f[k]).replace(",", "."));
     if (!f.aseguradora) return toast("Elige la aseguradora", "error");
     try {
@@ -2067,7 +2070,9 @@ function sheetFase(p, destino) {
         <label class="precio">Importe valorado (€, sin IVA)<input type="number" step="0.01" inputmode="decimal" name="importe_valorado" value="${(p.lineas_valoracion || []).length ? totalesLineas(p.lineas_valoracion).base : (p.importe_valorado ?? "")}"></label>` : ""}
       ${destino === "autorizado" ? `<label class="precio">Importe autorizado (€)<input type="number" step="0.01" inputmode="decimal" name="importe_autorizado" value="${(p.lineas_autorizadas || []).length ? totalesLineas(p.lineas_autorizadas).base : (p.importe_autorizado ?? p.importe_valorado ?? "")}"></label>` : ""}
       ${destino === "visitado" ? `<label class="btn ancho">${I.cam} Fotos de antes (opcional)<input type="file" accept="image/*" multiple hidden name="fotos" data-tipo="antes"></label><small class="suave" id="nFotos"></small>` : ""}
-      ${destino === "realizado" ? `<a class="btn ancho" href="#/lineas/${p.id}/realizados">📋 ${(p.lineas_realizadas || []).length ? "Revisar" : "Anotar"} trabajos realizados (códigos)</a>
+      ${destino === "realizado" ? `<label>Fecha en que se hizo el trabajo<input type="date" name="realizado_dia" value="${new Date().toLocaleDateString("sv-SE")}" max="${new Date().toLocaleDateString("sv-SE")}"></label>
+        <small class="suave" style="margin-top:-.4em">Si lo hiciste el mes pasado, pon esa fecha: así entra en la facturación de ese mes.</small>
+        <a class="btn ancho" href="#/lineas/${p.id}/realizados">📋 ${(p.lineas_realizadas || []).length ? "Revisar" : "Anotar"} trabajos realizados (códigos)</a>
         <label class="btn ancho primario">📄 Foto del parte firmado<input type="file" accept="image/*" capture="environment" hidden name="firmado"></label><small class="suave" id="nFirmado">${firmadoDe(p) ? "Ya hay un parte firmado; si haces otra foto se sustituye." : "Una sola foto. Irá la primera al enviar el trabajo terminado."}</small>
         <label class="btn ancho">${I.cam} Fotos del trabajo terminado<input type="file" accept="image/*" multiple hidden name="fotos" data-tipo="despues"></label><small class="suave" id="nFotos"></small>
         <div class="firma-caja"><div class="h3-fila"><b>Firma del cliente</b><button type="button" class="btn texto peq" id="limpiarFirma">Borrar</button></div>
@@ -2093,7 +2098,10 @@ function sheetFase(p, destino) {
     if (!destino && !nota) return toast("Escribe la nota", "error");
     const cambios = {};
     if (destino) cambios.estado = destino;
-    if (destino === "realizado") cambios.realizado_at = new Date().toISOString();
+    if (destino === "realizado") {
+      const dia = f.get("realizado_dia");
+      cambios.realizado_at = dia && dia !== new Date().toLocaleDateString("sv-SE") ? diaAISO(dia) : new Date().toISOString();
+    }
     else if (destino && p.estado === "realizado") cambios.realizado_at = null;
     if (f.has("fecha_cita")) cambios.fecha_cita = f.get("fecha_cita") ? new Date(f.get("fecha_cita")).toISOString() : null;
     if (f.has("importe_valorado")) cambios.importe_valorado = f.get("importe_valorado") === "" ? null : Number(f.get("importe_valorado"));
