@@ -403,3 +403,21 @@ body.sin-scroll { overflow: hidden; }
 .fotos-envio{display:grid;gap:.35em;margin:.4em 0 .9em;padding:.7em .8em;border:1px solid var(--borde,#e2e8f0);border-radius:12px}
 .fecha-realizado{margin:.5em 0 .2em;display:flex;align-items:center;gap:.6em;flex-wrap:wrap;font-size:.95em}
 .fecha-btn{border:1px solid var(--borde,#cbd5e1);background:transparent;border-radius:8px;padding:.1em .45em;font:inherit;color:inherit;cursor:pointer}
+
+/* Marcar partes hechos rápido */
+.mini.hecho { border: 0; font-size: 20px; font-weight: 800; color: #16a34a; background: #dcfce7; cursor: pointer; }
+.parte { position: relative; }
+.parte.elegido { outline: 3px solid #16a34a; outline-offset: -3px; }
+.sel-marca { font-size: 22px; line-height: 1; color: #16a34a; margin-right: 2px; }
+body.con-sel .fab { display: none; }
+body.con-sel .lista { padding-bottom: 90px; }
+.barra-sel { position: fixed; left: 0; right: 0; bottom: 0; z-index: 40; display: flex; align-items: center; gap: 8px; padding: 10px 14px calc(10px + env(safe-area-inset-bottom));
+  background: var(--card, #fff); box-shadow: 0 -4px 16px rgba(0,0,0,.15); }
+.barra-sel span { flex: 1; }
+.hecho-lista { display: grid; gap: 6px; max-height: 35vh; overflow: auto; margin: 4px 0 10px; }
+.hecho-lista > div { padding: 6px 8px; border-radius: 8px; background: var(--bg, #f1f5f9); }
+.hecho-lista small { display: block; }
+.revision { padding: 12px; max-width: 640px; margin: 0 auto; }
+.rev-card { display: grid; gap: 8px; }
+.rev-botones { display: grid; grid-template-columns: 2fr 1fr 1fr; gap: 8px; }
+.rev-botones .btn { justify-content: center; }
