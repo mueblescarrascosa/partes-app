@@ -129,6 +129,7 @@ const pieCopyright = () => `<footer class="copyright">© ${new Date().getFullYea
 window.addEventListener("hashchange", router);
 async function router() {
   cerrarSheet();
+  S.sel = null; document.getElementById("barraSel")?.remove(); document.body.classList.remove("con-sel");
   S.antesDeSalir = null;
   const h = location.hash.slice(1) || "/";
   const ses = await api.sesion();
@@ -151,6 +152,7 @@ async function router() {
   if (ruta === "papelera") return vistaPapelera();
   if (ruta === "compartido") return vistaCompartido();
   if (ruta === "agenda") return vistaAgenda();
+  if (ruta === "revision") return vistaRevision();
   if (ruta === "lote") return vistaLote();
   if (ruta === "facturacion") return (S.yo?.es_admin || api.modo !== "supabase") ? vistaFacturacion() : (location.hash = "/");
   if (ruta === "tarifa") return S.yo?.es_admin ? vistaTarifa() : (location.hash = "/");
@@ -222,6 +224,7 @@ async function vistaLista() {
       ${[["recientes", "Últimos movidos"], ["antiguos", "Más días primero"], ["cita", "Próxima cita"], ["nuevos", "Últimos entrados"]].map(([v, t]) => `<option value="${v}" ${S.orden === v ? "selected" : ""}>${t}</option>`).join("")}
     </select>
     <button class="btn peq" id="btnFiltros">⚙️ Más filtros<b id="nFiltros"></b></button>
+    <button class="btn peq" id="btnSel" title="O mantén pulsado un parte">☑ Seleccionar</button>
   </div>
   <div class="filtros-activos" id="fActivos"></div>
   <div id="avisoLote"></div>
@@ -233,6 +236,7 @@ async function vistaLista() {
   $("#fAseg").addEventListener("change", (e) => { S.filtroAseg = e.target.value; sessionSet("filtroAseg", S.filtroAseg); pintarLista(); });
   $("#orden").addEventListener("change", (e) => { S.orden = e.target.value; sessionSet("orden", S.orden); pintarLista(); });
   $("#btnFiltros").addEventListener("click", sheetFiltros);
+  $("#btnSel").addEventListener("click", () => { S.sel = S.sel ? null : new Set(); if (S.sel) toast("Toca los partes para elegirlos", "ok"); pintarLista(); });
   $("#btnResumen").addEventListener("click", () => sheetResumen(true));
   $("#nuevo").addEventListener("click", menuNuevo);
   $("#recargar").addEventListener("click", cargarPartes);
@@ -298,10 +302,38 @@ function pintarLista() {
     return;
   }
   cont.innerHTML = lista.map(tarjetaParte).join("");
-  $$(".parte", cont).forEach((el) => el.addEventListener("click", (e) => {
-    if (e.target.closest("a")) return;
-    location.hash = "/parte/" + el.dataset.id;
-  }));
+  const porId = (id) => S.partes.find((x) => x.id === id);
+  $$(".parte", cont).forEach((el) => {
+    let t = null, largo = false;
+    el.addEventListener("pointerdown", () => { largo = false; t = setTimeout(() => { largo = true; if (!S.sel) S.sel = new Set(); S.sel.add(el.dataset.id); navigator.vibrate?.(30); pintarLista(); }, 550); });
+    ["pointerup", "pointerleave", "pointercancel"].forEach((ev) => el.addEventListener(ev, () => clearTimeout(t)));
+    el.addEventListener("contextmenu", (e) => e.preventDefault());
+    el.addEventListener("click", (e) => {
+      if (largo) { largo = false; return; }
+      const bh = e.target.closest("[data-hecho]");
+      if (bh) { e.stopPropagation(); sheetHechoRapido([porId(bh.dataset.hecho)], pintarLista); return; }
+      if (e.target.closest("a")) return;
+      if (S.sel) { S.sel.has(el.dataset.id) ? S.sel.delete(el.dataset.id) : S.sel.add(el.dataset.id); if (!S.sel.size) S.sel = null; pintarLista(); return; }
+      location.hash = "/parte/" + el.dataset.id;
+    });
+  });
+  pintarBarraSel();
+}
+
+function pintarBarraSel() {
+  let b = $("#barraSel");
+  document.body.classList.toggle("con-sel", !!S.sel);
+  if (!S.sel) { b?.remove(); return; }
+  if (!b) { b = document.createElement("div"); b.id = "barraSel"; b.className = "barra-sel"; document.body.appendChild(b); }
+  const elegidos = [...S.sel].map((id) => S.partes.find((x) => x.id === id)).filter(Boolean);
+  const pend = elegidos.filter((p) => p.estado !== "realizado");
+  b.innerHTML = `<span><b>${elegidos.length}</b> elegido${elegidos.length === 1 ? "" : "s"}</span>
+    <button class="btn peq" id="selTodos">Todos</button>
+    <button class="btn peq primario" id="selHecho" style="--c:#16a34a" ${pend.length ? "" : "disabled"}>✓ Realizados${pend.length !== elegidos.length ? ` (${pend.length})` : ""}</button>
+    <button class="btn peq texto" id="selFin">✕</button>`;
+  $("#selFin", b).onclick = () => { S.sel = null; pintarLista(); };
+  $("#selTodos", b).onclick = () => { $$("#lista .parte").forEach((el) => S.sel.add(el.dataset.id)); pintarLista(); };
+  $("#selHecho", b).onclick = () => sheetHechoRapido(pend, () => { S.sel = null; pintarLista(); });
 }
 
 // ------------------------------------------------------------------ Más filtros
@@ -411,6 +443,7 @@ function datosResumen() {
     { k: "falta", v: "valorar", t: "📋 Visitados sin valorar", n: cuenta("falta", "valorar"), aviso: true },
     { k: "falta", v: "autorizar", t: "⏳ Valorados sin respuesta (más de 7 días)", n: cuenta("falta", "autorizar"), aviso: true },
     { k: "falta", v: "terminar", t: "🔧 Autorizados pendientes de hacer", n: cuenta("falta", "terminar"), aviso: false },
+    { ir: "/revision", t: "✅ ¿Están hechos? Revisar autorizados y citas pasadas", n: candidatosRevision().length, aviso: true },
     { k: "dias", v: "30", t: "🔴 Atascados (más de 30 días)", n: ps.filter((p) => p.estado !== "realizado" && diasParte(p) > 30).length, aviso: true },
     ...((S.yo?.es_admin || api.modo !== "supabase") && ps.length ? (() => {
       const ult = CFG.ULTIMA_COPIA || sessionGet("ultimaCopia");
@@ -658,6 +691,153 @@ async function fechaDeFoto(file) {
   return file.lastModified ? new Date(file.lastModified).toLocaleDateString("sv-SE") : null;
 }
 
+// ---- Marcar partes hechos rápido (uno, varios o revisando los atascados)
+const hoyDia = () => new Date().toLocaleDateString("sv-SE");
+// Fecha propuesta del trabajo: la de la última cita si ya pasó; si no, hoy
+function fechaPropuesta(p) {
+  if (p.fecha_cita) { const d = new Date(p.fecha_cita).toLocaleDateString("sv-SE"); if (d <= hoyDia()) return d; }
+  return hoyDia();
+}
+const avisosHecho = (p) => [
+  !esConexion(p) && importeParte(p) == null ? "sin importe" : "",
+  !esConexion(p) && !(p.lineas_autorizadas || []).length && !(p.lineas_valoracion || []).length ? "sin códigos" : "",
+].filter(Boolean);
+
+async function marcarHechos(lista, diaDe) {
+  let n = 0;
+  await conCarga("Marcando…", async () => {
+    for (const p of lista) {
+      cargando(true, `Marcando ${++n} de ${lista.length}…`);
+      const realizado_at = diaDe(p) === hoyDia() ? new Date().toISOString() : diaAISO(diaDe(p));
+      await api.actualizarParte(p.id, { estado: "realizado", realizado_at });
+      await api.anadirEvento(p.id, "realizado", "Marcado como hecho desde la lista (sin fotos ni firma).");
+      Object.assign(p, { estado: "realizado", realizado_at });
+    }
+  });
+  toast(lista.length === 1 ? "Marcado como realizado" : `${lista.length} partes marcados como realizados`, "ok");
+}
+
+// Alta rápida de un parte que ya está hecho: lo mínimo para facturarlo y luego sus códigos
+function sheetAltaHecho() {
+  const opc = [...new Set(CFG.ASEGURADORAS)].filter(Boolean);
+  const s = abrirSheet(`
+    <h2>✓ Parte ya hecho</h2>
+    <form id="fAltaHecho" class="form">
+      <label>Aseguradora<select name="aseguradora" required><option value="">— Elegir —</option>${opc.map((a) => `<option>${esc(a)}</option>`).join("")}</select></label>
+      <label>Nº expediente<input name="expediente" required autocomplete="off"></label>
+      <label>Nombre del cliente <small class="suave">(opcional)</small><input name="nombre" autocomplete="off"></label>
+      <label>Dirección<input name="direccion" required autocomplete="off"></label>
+      <label>Población<input name="poblacion" autocomplete="off"></label>
+      <label>Fecha en que se hizo<input type="date" name="dia" value="${hoyDia()}" max="${hoyDia()}" required></label>
+      <p class="suave">Al guardar se abren los <b>códigos realizados</b> para añadirlos.</p>
+      <div class="pie-form"><button type="button" class="btn" data-cerrar>Cancelar</button><button type="submit" class="btn primario" style="--c:#16a34a">Guardar y poner códigos</button></div>
+    </form>`);
+  $("#fAltaHecho", s).addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    const f = Object.fromEntries(new FormData(ev.target));
+    const dia = f.dia; delete f.dia;
+    for (const k in f) f[k] = String(f[k]).trim() || null;
+    const realizado_at = dia === hoyDia() ? new Date().toISOString() : diaAISO(dia);
+    // ¿Ya existe ese expediente?
+    const exp = (f.expediente || "").toUpperCase().replace(/\s/g, "");
+    const ya = (S.partes || []).find((p) => !p.borrado_at && (p.expediente || "").toUpperCase().replace(/\s/g, "") === exp && (p.aseguradora || "") === f.aseguradora);
+    if (ya) {
+      if (!confirm(`Ya tienes el expediente ${f.expediente} (${ya.nombre || "sin nombre"}, ${estadoInfo(ya.estado).nombre.toLowerCase()}). ¿Marcar ese como hecho en vez de crear otro?`)) return;
+      cerrarSheet();
+      try { if (ya.estado !== "realizado") await marcarHechos([ya], () => dia); } catch { return; }
+      location.hash = `/lineas/${ya.id}/realizados`; return;
+    }
+    const datos = aMayus({ ...f, estado: "realizado", realizado_at });
+    datos.tipo = detectarTipo(datos);
+    cerrarSheet();
+    try {
+      const n = await conCarga("Guardando…", async () => {
+        const n = await api.crearParte(datos);
+        await api.anadirEvento(n.id, "realizado", "Alta rápida de un parte ya hecho.");
+        return n;
+      });
+      S.partes = [n, ...(S.partes || [])];
+      toast("Parte guardado como hecho. Ahora pon los códigos.", "ok");
+      location.hash = `/lineas/${n.id}/realizados`;
+    } catch { /* conCarga avisa */ }
+  });
+}
+
+function sheetHechoRapido(lista, alTerminar) {
+  const uno = lista.length === 1;
+  const s = abrirSheet(`
+    <h2>✓ Marcar ${uno ? "como realizado" : `${lista.length} partes como realizados`}</h2>
+    <div class="hecho-lista">${lista.map((p) => `<div><b>${esc(p.nombre || "Sin nombre")}</b> <small>${esc(p.aseguradora || "")} ${esc(p.expediente || "")} · ${estadoInfo(p.estado).nombre}</small>
+      ${avisosHecho(p).length ? `<small class="rojo"> ⚠️ ${avisosHecho(p).join(", ")}</small>` : ""}</div>`).join("")}</div>
+    <form id="fHecho" class="form">
+      ${uno ? "" : `<label class="check"><input type="radio" name="modo" value="cita" checked> Cada uno con la fecha de su cita (si no tiene, hoy)</label>
+      <label class="check"><input type="radio" name="modo" value="misma"> La misma fecha para todos</label>`}
+      <label id="lDia" ${uno ? "" : 'class="oculto"'}>Fecha en que se hizo el trabajo<input type="date" name="dia" value="${fechaPropuesta(lista[0])}" max="${hoyDia()}"></label>
+      ${uno && lista[0].fecha_cita && fechaPropuesta(lista[0]) !== hoyDia() ? '<small class="suave">Propuesta: la fecha de su última cita.</small>' : ""}
+      <p class="suave">Se marca sin fotos ni firma. Si luego tienes la foto del parte firmado, añádela desde la ficha.</p>
+      <div class="pie-form"><button type="button" class="btn" data-cerrar>Cancelar</button><button type="submit" class="btn primario" style="--c:#16a34a">Marcar ${uno ? "" : `(${lista.length})`}</button></div>
+    </form>`);
+  $$("input[name=modo]", s).forEach((r) => r.addEventListener("change", () => $("#lDia", s).classList.toggle("oculto", r.value !== "misma" || !r.checked)));
+  $("#fHecho", s).addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    const f = new FormData(ev.target);
+    const misma = uno || f.get("modo") === "misma";
+    const dia = f.get("dia") || hoyDia();
+    cerrarSheet();
+    try { await marcarHechos(lista, (p) => (misma ? dia : fechaPropuesta(p))); } catch { /* conCarga avisa */ }
+    alTerminar?.();
+  });
+}
+
+// Partes que probablemente ya están hechos y nadie ha marcado
+const POSPUESTOS = () => { try { return JSON.parse(sessionGet("revPospuestos") || "{}"); } catch { return {}; } };
+function candidatosRevision() {
+  const pos = POSPUESTOS(), ahora = Date.now();
+  return (S.partes || []).filter((p) => {
+    if (p.estado === "realizado" || p.borrado_at) return false;
+    if (pos[p.id] && pos[p.id] > ahora) return false;
+    const autorizadoViejo = p.estado === "autorizado" && (ahora - new Date(p.updated_at)) / 864e5 > 5;
+    const citaPasada = p.fecha_cita && idxEstado(p.estado) >= idxEstado("valorado") && (ahora - new Date(p.fecha_cita)) / 864e5 > 1;
+    return autorizadoViejo || citaPasada;
+  }).sort((a, b) => (a.updated_at || "").localeCompare(b.updated_at || ""));
+}
+
+async function vistaRevision() {
+  try { S.partes = await api.listarPartes(); } catch { /* lo que haya */ }
+  app.innerHTML = `
+  <header class="barra">
+    <button class="icono" id="volver" aria-label="Volver">${I.back}</button>
+    <h1>¿Están hechos?</h1><span></span>
+  </header>
+  <main id="rev" class="revision"></main>`;
+  $("#volver").onclick = () => (location.hash = "/");
+  const pinta = () => {
+    const lista = candidatosRevision();
+    const p = lista[0];
+    if (!p) { $("#rev").innerHTML = '<div class="vacio">✅ No queda ningún parte por revisar.<br><a href="#/">Volver a la lista</a></div>'; return; }
+    $("#rev").innerHTML = `
+      <p class="suave">Quedan <b>${lista.length}</b>. Autorizados hace más de 5 días o con la cita ya pasada.</p>
+      <section class="tarjeta rev-card">
+        <div class="parte-top"><span class="aseg" style="--ase:${colorAseg(p.aseguradora)}">${esc(p.aseguradora || "")}</span><span class="exp">${esc(p.expediente || "")}</span>
+          <span class="estado" style="--c:${estadoInfo(p.estado).color}">${estadoInfo(p.estado).nombre}</span></div>
+        <div class="parte-nombre">${esc(p.nombre || "Sin nombre")}</div>
+        <div class="parte-dir">${esc([p.direccion, p.poblacion].filter(Boolean).join(", "))}</div>
+        ${p.averia ? `<div class="parte-averia">${esc(p.averia)}</div>` : ""}
+        <p class="suave">${p.fecha_cita ? `Última cita: ${fFechaHora(p.fecha_cita)} · ` : ""}Último cambio ${hace(p.updated_at)}${avisosHecho(p).length ? ` · <span class="rojo">⚠️ ${avisosHecho(p).join(", ")}</span>` : ""}</p>
+        <label>Fecha del trabajo<input type="date" id="revDia" value="${fechaPropuesta(p)}" max="${hoyDia()}"></label>
+        <div class="rev-botones">
+          <button class="btn primario grande" id="revSi" style="--c:#16a34a">✓ Hecho</button>
+          <button class="btn grande" id="revNo">Aún no</button>
+          <a class="btn grande" href="#/parte/${p.id}">Abrir</a>
+        </div>
+        <p class="suave">«Aún no» lo quita de esta lista durante 7 días.</p>
+      </section>`;
+    $("#revSi").onclick = async () => { const dia = $("#revDia").value || hoyDia(); try { await marcarHechos([p], () => dia); } catch { return; } pinta(); };
+    $("#revNo").onclick = () => { const pos = POSPUESTOS(); pos[p.id] = Date.now() + 7 * 864e5; sessionSet("revPospuestos", JSON.stringify(pos)); pinta(); };
+  };
+  pinta();
+}
+
 function sheetFechaRealizado(p, alGuardar) {
   const hoy = new Date().toLocaleDateString("sv-SE");
   const s = abrirSheet(`
@@ -839,8 +1019,9 @@ function tarjetaParte(p) {
   const e = estadoInfo(p.estado);
   const asignado = S.miembros.find((m) => m.user_id === p.asignado_a)?.nombre;
   return `
-  <article class="parte" data-id="${p.id}" style="--ase:${colorAseg(p.aseguradora)}">
+  <article class="parte ${S.sel?.has(p.id) ? "elegido" : ""}" data-id="${p.id}" style="--ase:${colorAseg(p.aseguradora)}">
     <div class="parte-top">
+      ${S.sel ? `<span class="sel-marca">${S.sel.has(p.id) ? "☑" : "☐"}</span>` : ""}
       <span class="aseg">${esc(p.aseguradora)}</span>
       <span class="exp">${esc(p.expediente || "sin nº")}</span>
       ${p.repetido_de ? '<span class="rep-badge" title="Parte repetido con cambios">🔁 Repetido</span>' : ""}
@@ -855,6 +1036,7 @@ function tarjetaParte(p) {
     <div class="parte-pie">
       <span>${p.fecha_cita && ["contactado"].includes(p.estado) ? `📅 Cita ${fFechaHora(p.fecha_cita)}` : hace(p.updated_at)}${asignado ? " · " + esc(asignado) : ""}</span>
       <span class="parte-acc">
+        ${p.estado !== "realizado" ? `<button class="mini hecho" data-hecho="${p.id}" aria-label="Marcar como realizado" title="Marcar como realizado">✓</button>` : ""}
         ${p.telefono ? `<a class="mini wa" href="${linkWhatsApp(p.telefono)}" target="_blank" rel="noopener" aria-label="WhatsApp">${I.wa}</a>
         <a class="mini tel" href="${linkLlamar(p.telefono)}" aria-label="Llamar">${I.phone}</a>` : ""}
       </span>
@@ -917,7 +1099,9 @@ function menuNuevo() {
       <button class="btn grande" id="nArch">${I.file}<span><b>Subir PDF o imagen</b><small>Desde archivos, correo o descargas</small></span></button>
       <button class="btn grande" id="nLote">${I.file}<span><b>Subir varios partes a la vez</b><small>Elige varios PDF o fotos: uno por parte</small></span></button>
       <button class="btn grande" id="nMano">${I.edit}<span><b>Crear a mano</b><small>Sin documento</small></span></button>
+      <button class="btn grande" id="nHecho" style="--c:#16a34a">✓<span><b>Parte ya hecho (alta rápida)</b><small>Expediente, dirección, fecha y códigos realizados</small></span></button>
     </div>`);
+  $("#nHecho", s).onclick = () => { cerrarSheet(); setTimeout(sheetAltaHecho, 50); };
   $("#nCam", s).onclick = () => { cerrarSheet(); $("#inCamara").click(); };
   $("#nArch", s).onclick = () => { cerrarSheet(); $("#inArchivo").click(); };
   $("#nLote", s).onclick = () => { cerrarSheet(); $("#inLote").click(); };
@@ -2126,8 +2310,8 @@ function sheetFase(p, destino) {
         <label class="precio">Importe valorado (€, sin IVA)<input type="number" step="0.01" inputmode="decimal" name="importe_valorado" value="${(p.lineas_valoracion || []).length ? totalesLineas(p.lineas_valoracion).base : (p.importe_valorado ?? "")}"></label>` : ""}
       ${destino === "autorizado" ? `<label class="precio">Importe autorizado (€)<input type="number" step="0.01" inputmode="decimal" name="importe_autorizado" value="${(p.lineas_autorizadas || []).length ? totalesLineas(p.lineas_autorizadas).base : (p.importe_autorizado ?? p.importe_valorado ?? "")}"></label>` : ""}
       ${destino === "visitado" ? `<label class="btn ancho">${I.cam} Fotos de antes (opcional)<input type="file" accept="image/*" multiple hidden name="fotos" data-tipo="antes"></label><small class="suave" id="nFotos"></small>` : ""}
-      ${destino === "realizado" ? `<label>Fecha en que se hizo el trabajo<input type="date" name="realizado_dia" value="${new Date().toLocaleDateString("sv-SE")}" max="${new Date().toLocaleDateString("sv-SE")}"></label>
-        <small class="suave" style="margin-top:-.4em" id="nDia">Se pone sola con la fecha de la foto del parte firmado. Decide el mes de la facturación.</small>
+      ${destino === "realizado" ? `<label>Fecha en que se hizo el trabajo<input type="date" name="realizado_dia" value="${fechaPropuesta(p)}" max="${new Date().toLocaleDateString("sv-SE")}"></label>
+        <small class="suave" style="margin-top:-.4em" id="nDia">${fechaPropuesta(p) !== hoyDia() ? "Propuesta: la fecha de su última cita. " : ""}Si añades la foto del parte firmado, se pone la fecha de la foto. Decide el mes de la facturación.</small>
         <a class="btn ancho" href="#/lineas/${p.id}/realizados">📋 ${(p.lineas_realizadas || []).length ? "Revisar" : "Anotar"} trabajos realizados (códigos)</a>
         <label class="btn ancho primario">📄 Foto del parte firmado<input type="file" accept="image/*" capture="environment" hidden name="firmado"></label><small class="suave" id="nFirmado">${firmadoDe(p) ? "Ya hay un parte firmado; si haces otra foto se sustituye." : "Una sola foto. Irá la primera al enviar el trabajo terminado."}</small>
         <label class="btn ancho">${I.cam} Fotos del trabajo terminado<input type="file" accept="image/*" multiple hidden name="fotos" data-tipo="despues"></label><small class="suave" id="nFotos"></small>
