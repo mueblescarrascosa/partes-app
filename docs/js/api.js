@@ -10,6 +10,20 @@ function crearApiSupabase() {
   const ok = ({ data, error }) => { if (error) throw error; return data; };
   let yo = null;
 
+  // Supabase devuelve como mucho 1.000 filas por consulta: las listas se leen en bloques.
+  // Los bloques van ordenados por la clave única (no cambia aunque alguien edite mientras se lee)
+  // y después se reordena en el móvil; sort es estable, así que en los empates manda la clave.
+  const TAM_BLOQUE = 1000;
+  async function leerTodo(consulta, clave = "id") {
+    const filas = [];
+    for (let desde = 0; ; desde += TAM_BLOQUE) {
+      const bloque = ok(await consulta().order(clave).range(desde, desde + TAM_BLOQUE - 1));
+      filas.push(...bloque);
+      if (bloque.length < TAM_BLOQUE) return filas;
+    }
+  }
+  const porFecha = (campo, desc = false) => (a, b) => (new Date(a[campo]) - new Date(b[campo])) * (desc ? -1 : 1);
+
   return {
     modo: "supabase",
     async sesion() {
@@ -36,21 +50,24 @@ function crearApiSupabase() {
     async miembros() { return ok(await sb.from("miembros").select("user_id,nombre,telefono,es_admin,ver_precios").order("nombre")); },
 
     async listarPartes() {
-      return ok(await sb.from("partes").select("*").is("borrado_at", null).order("updated_at", { ascending: false }).limit(3000));
+      const r = await leerTodo(() => sb.from("partes").select("*").is("borrado_at", null));
+      return r.sort(porFecha("updated_at", true));
     },
     async usoIA(desde) {
-      return ok(await sb.from("lecturas_ia").select("created_at,proveedor,modelo,tokens_in,tokens_out,coste_usd").gte("created_at", desde).order("created_at", { ascending: false }).limit(5000));
+      const r = await leerTodo(() => sb.from("lecturas_ia").select("created_at,proveedor,modelo,tokens_in,tokens_out,coste_usd").gte("created_at", desde));
+      return r.sort(porFecha("created_at", true));
     },
     async usoAlmacenamiento() { const { data, error } = await sb.rpc("uso_almacenamiento"); if (error) throw error; return data; },
     async exportarTodo() {
-      const [p, e] = await Promise.all([
-        sb.from("partes").select("*").order("created_at").limit(10000),
-        sb.from("eventos").select("*").order("created_at").limit(50000),
+      const [partes, eventos] = await Promise.all([
+        leerTodo(() => sb.from("partes").select("*")),
+        leerTodo(() => sb.from("eventos").select("*")),
       ]);
-      return { partes: ok(p), eventos: ok(e) };
+      return { partes: partes.sort(porFecha("created_at")), eventos: eventos.sort(porFecha("created_at")) };
     },
     async listarPapelera() {
-      return ok(await sb.from("partes").select("id,aseguradora,expediente,nombre,poblacion,estado,borrado_at").not("borrado_at", "is", null).order("borrado_at", { ascending: false }));
+      const r = await leerTodo(() => sb.from("partes").select("id,aseguradora,expediente,nombre,poblacion,estado,borrado_at").not("borrado_at", "is", null));
+      return r.sort(porFecha("borrado_at", true));
     },
     async aPapelera(id) { ok(await sb.from("partes").update({ borrado_at: new Date().toISOString() }).eq("id", id)); },
     async restaurarParte(id) { ok(await sb.from("partes").update({ borrado_at: null }).eq("id", id)); },
@@ -60,10 +77,10 @@ function crearApiSupabase() {
     async obtenerParte(id) {
       const [p, ev, fo] = await Promise.all([
         sb.from("partes").select("*").eq("id", id).single(),
-        sb.from("eventos").select("*").eq("parte_id", id).order("created_at"),
-        sb.from("fotos").select("*").eq("parte_id", id).order("created_at"),
+        leerTodo(() => sb.from("eventos").select("*").eq("parte_id", id)),
+        leerTodo(() => sb.from("fotos").select("*").eq("parte_id", id)),
       ]);
-      return { ...ok(p), eventos: ok(ev), fotos: ok(fo) };
+      return { ...ok(p), eventos: ev.sort(porFecha("created_at")), fotos: fo.sort(porFecha("created_at")) };
     },
     async buscarDuplicado(aseguradora, expediente) {
       if (!expediente) return null;
@@ -73,8 +90,14 @@ function crearApiSupabase() {
     async crearParte(p) { return ok(await sb.from("partes").insert(p).select().single()); },
     async actualizarParte(id, cambios) { return ok(await sb.from("partes").update(cambios).eq("id", id).select().single()); },
     async borrarParte(id) {
-      const { data: files } = await sb.storage.from(BUCKET).list(id, { limit: 1000 });
-      if (files?.length) await sb.storage.from(BUCKET).remove(files.map((f) => `${id}/${f.name}`));
+      // Primero se apuntan todos los archivos (en bloques) y después se borran: borrar mientras se lista descuadraría los bloques
+      const rutas = [];
+      for (let offset = 0; ; offset += TAM_BLOQUE) {
+        const { data: files } = await sb.storage.from(BUCKET).list(id, { limit: TAM_BLOQUE, offset });
+        rutas.push(...(files || []).map((f) => `${id}/${f.name}`));
+        if (!files || files.length < TAM_BLOQUE) break;
+      }
+      for (let i = 0; i < rutas.length; i += TAM_BLOQUE) await sb.storage.from(BUCKET).remove(rutas.slice(i, i + TAM_BLOQUE));
       ok(await sb.from("partes").delete().eq("id", id));
     },
     async anadirEvento(parte_id, estado, nota, created_at) {
@@ -98,7 +121,10 @@ function crearApiSupabase() {
     },
 
     async listarTarifa() {
-      return ok(await sb.from("tarifa").select("*").order("orden", { ascending: true, nullsFirst: false }).order("codigo"));
+      // Se lee por código y se ordena por "orden" (los que no tienen, al final); en los empates queda el orden por código
+      const r = await leerTodo(() => sb.from("tarifa").select("*"), "codigo");
+      const orden = (x) => x.orden ?? Number.MAX_SAFE_INTEGER;
+      return r.sort((a, b) => orden(a) - orden(b));
     },
     async guardarCodigo(c) { ok(await sb.from("tarifa").upsert({ ...c, updated_at: new Date().toISOString() })); },
     async borrarCodigo(codigo) { ok(await sb.from("tarifa").delete().eq("codigo", codigo)); },

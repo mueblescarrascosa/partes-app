@@ -2176,11 +2176,9 @@ async function pintarFotos(p) {
 }
 
 async function subirFotos(p, files, tipo) {
-  if (tipo === "firmado") {   // solo hay un parte firmado: el nuevo sustituye al anterior
-    files = files.slice(0, 1);
-    const previos = (p.fotos || []).filter((f) => f.tipo === "firmado");
-    for (const f of previos) await api.borrarFoto(f).catch(() => {});
-  }
+  // Solo hay un parte firmado: el nuevo sustituye al anterior, pero el anterior no se borra hasta tener el nuevo guardado
+  const previos = tipo === "firmado" ? (p.fotos || []).filter((f) => f.tipo === "firmado") : [];
+  if (tipo === "firmado") files = files.slice(0, 1);
   let n = 0;
   for (const file of files) {
     cargando(true, `Subiendo foto ${++n} de ${files.length}…`);
@@ -2188,6 +2186,8 @@ async function subirFotos(p, files, tipo) {
     const path = await api.subirArchivo(`${p.id}/foto_${Date.now()}_${n}.jpg`, blob, "image/jpeg");
     await api.anadirFoto(p.id, path, tipo);
   }
+  // Si esto falla quedan dos firmados: se usa siempre el último (firmadoDe) y el viejo se puede borrar a mano
+  for (const f of previos) await api.borrarFoto(f).catch(() => {});
 }
 
 function sheetFotos(p) {
