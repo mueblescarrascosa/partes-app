@@ -77,8 +77,8 @@ function crearApiSupabase() {
       if (files?.length) await sb.storage.from(BUCKET).remove(files.map((f) => `${id}/${f.name}`));
       ok(await sb.from("partes").delete().eq("id", id));
     },
-    async anadirEvento(parte_id, estado, nota) {
-      return ok(await sb.from("eventos").insert({ parte_id, estado, nota }).select().single());
+    async anadirEvento(parte_id, estado, nota, created_at) {
+      return ok(await sb.from("eventos").insert({ parte_id, estado, nota, ...(created_at ? { created_at } : {}) }).select().single());
     },
     async borrarEvento(id) { ok(await sb.from("eventos").delete().eq("id", id)); },
 
@@ -197,8 +197,8 @@ function crearApiDemo() {
       db.fotos = db.fotos.filter((p) => p.parte_id !== id);
       guardar();
     },
-    async anadirEvento(parte_id, estado, nota) {
-      const e = { id: db.seq++, parte_id, estado, nota, creado_por: "demo", created_at: ahora() };
+    async anadirEvento(parte_id, estado, nota, created_at) {
+      const e = { id: db.seq++, parte_id, estado, nota, creado_por: "demo", created_at: created_at || ahora() };
       db.eventos.push(e); guardar(); return e;
     },
     async borrarEvento(id) { db.eventos = db.eventos.filter((e) => e.id !== id); guardar(); },

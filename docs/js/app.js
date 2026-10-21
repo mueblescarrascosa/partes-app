@@ -691,6 +691,20 @@ async function fechaDeFoto(file) {
   return file.lastModified ? new Date(file.lastModified).toLocaleDateString("sv-SE") : null;
 }
 
+// Al saltar a una fase, se anotan también las anteriores que faltaban, en su orden, unos segundos antes cada una
+async function anotarFase(p, destino, nota) {
+  const desde = idxEstado(p.estado), hasta = idxEstado(destino);
+  const ahora = Date.now();
+  if (destino && hasta > desde + 1) {
+    const faltan = ESTADOS.slice(desde + 1, hasta);
+    for (let i = 0; i < faltan.length; i++) {
+      await api.anadirEvento(p.id, faltan[i].id, "Marcado automáticamente al pasar a una fase posterior.",
+        new Date(ahora - (faltan.length - i) * 1000).toISOString());   // segundos antes: el orden queda siempre el establecido
+    }
+  }
+  await api.anadirEvento(p.id, destino, nota, new Date(ahora).toISOString());
+}
+
 // ---- Marcar partes hechos rápido (uno, varios o revisando los atascados)
 const hoyDia = () => new Date().toLocaleDateString("sv-SE");
 // Fecha propuesta del trabajo: la de la última cita si ya pasó; si no, hoy
@@ -710,7 +724,7 @@ async function marcarHechos(lista, diaDe) {
       cargando(true, `Marcando ${++n} de ${lista.length}…`);
       const realizado_at = diaDe(p) === hoyDia() ? new Date().toISOString() : diaAISO(diaDe(p));
       await api.actualizarParte(p.id, { estado: "realizado", realizado_at });
-      await api.anadirEvento(p.id, "realizado", "Marcado como hecho desde la lista (sin fotos ni firma).");
+      await anotarFase(p, "realizado", "Marcado como hecho desde la lista (sin fotos ni firma).");
       Object.assign(p, { estado: "realizado", realizado_at });
     }
   });
@@ -753,7 +767,7 @@ function sheetAltaHecho() {
     try {
       const n = await conCarga("Guardando…", async () => {
         const n = await api.crearParte(datos);
-        await api.anadirEvento(n.id, "realizado", "Alta rápida de un parte ya hecho.");
+        await anotarFase({ ...n, estado: "recibido" }, "realizado", "Alta rápida de un parte ya hecho.");
         return n;
       });
       S.partes = [n, ...(S.partes || [])];
@@ -1015,6 +1029,17 @@ async function vistaFacturacion() {
   pinta();
 }
 
+// Modalidad (asistencia: mano de obra cubierta, material no), avisos de cobertura y límite de importe
+const esAsistencia = (p) => /asist/i.test(p.modalidad || "") || /material/i.test(p.aviso_cobertura || "");
+function avisoCobertura(p) {
+  if (!p.modalidad && !p.aviso_cobertura && !p.limite_importe) return "";
+  const t = [];
+  if (p.modalidad) t.push(`<b>Modalidad: ${esc(p.modalidad)}</b>${esAsistencia(p) && !p.aviso_cobertura ? " · revisa si el material está cubierto" : ""}`);
+  if (p.aviso_cobertura) t.push(`⚠️ ${esc(p.aviso_cobertura)}`);
+  if (p.limite_importe) t.push(`💶 Límite: <b>${fEuros(p.limite_importe)}</b>`);
+  return `<div class="aviso cobertura-info">🧰 ${t.join("<br>")}</div>`;
+}
+
 function tarjetaParte(p) {
   const e = estadoInfo(p.estado);
   const asignado = S.miembros.find((m) => m.user_id === p.asignado_a)?.nombre;
@@ -1026,6 +1051,8 @@ function tarjetaParte(p) {
       <span class="exp">${esc(p.expediente || "sin nº")}</span>
       ${p.repetido_de ? '<span class="rep-badge" title="Parte repetido con cambios">🔁 Repetido</span>' : ""}
       ${esConexion(p) ? '<span class="cx-badge" title="Presupuesto particular para el cliente">💬 Conexión</span>' : ""}
+      ${esAsistencia(p) ? `<span class="cx-badge as-badge" title="${esc(p.aviso_cobertura || "Asistencia")}">🧰 ${esc(p.modalidad || "Asistencia")}</span>` : ""}
+      ${p.limite_importe ? `<span class="cx-badge lim-badge" title="Límite de importe">💶 ≤ ${fEuros(p.limite_importe)}</span>` : ""}
       ${chipDias(p)}
       <span class="estado" style="--c:${e.color}">${e.nombre}</span>
     </div>
@@ -1439,7 +1466,8 @@ async function actualizarExistente(pid, f) {
 
 // ------------------------------------------------------------------ Subida de varios partes (lote)
 const CAMPOS_PARTE = ["aseguradora", "expediente", "num_encargo", "num_siniestro", "poliza", "fecha_encargo", "nombre", "direccion",
-  "codigo_postal", "poblacion", "provincia", "telefono", "telefono2", "perjudicado_nombre", "perjudicado_telefono", "averia", "tramitador_nombre", "tramitador_telefono", "tramitador_email"];
+  "codigo_postal", "poblacion", "provincia", "telefono", "telefono2", "perjudicado_nombre", "perjudicado_telefono", "averia", "tramitador_nombre", "tramitador_telefono", "tramitador_email",
+  "modalidad", "aviso_cobertura", "limite_importe"];
 const MAX_LOTE = 20;
 
 // ---- La tanda en curso se guarda en el móvil (IndexedDB): si se sale sin querer o se cierra la app, se puede recuperar
@@ -1635,7 +1663,7 @@ async function guardarLote() {
       const rep = await analizarRepeticion(f).catch(() => null);
       if (rep?.identico) { it.estado = "error"; it.error = "ya existía igual; no se ha guardado"; fallos++; continue; }
       if (rep) { f.repetido_de = rep.orig.id; f.cambios_repetido = rep.diffs.map((x) => x.txt).join(" · "); }
-      const n = await api.crearParte({ ...f, asignado_a: S.yo?.user_id ?? null, datos_ia: it.datos });
+      const n = await api.crearParte(conLineasIA({ ...f, asignado_a: S.yo?.user_id ?? null, datos_ia: it.datos }, it.datos));
       const ext = it.mime === "application/pdf" ? "pdf" : "jpg";
       const path = await api.subirArchivo(`${n.id}/documento.${ext}`, it.blob, it.mime);
       await api.actualizarParte(n.id, { documento_path: path });
@@ -1677,9 +1705,28 @@ const aMayus = (o) => {
   return o;
 };
 
+// Si el parte trae códigos con precio, viene valorado y autorizado: se guardan en ambas
+function conLineasIA(f, datos) {
+  const ls = (datos?.lineas || []).filter((l) => l && (l.codigo || l.descripcion));
+  if (!ls.length) return f;
+  const base = totalesLineas(ls).base;
+  f.lineas_valoracion = ls; f.importe_valorado = base;
+  if (!esConexion(f)) { f.lineas_autorizadas = ls; f.importe_autorizado = base; }
+  return f;
+}
+
 function normalizar(d = {}) {
   const r = {};
-  for (const [k, v] of Object.entries(d)) r[k] = v === null || v === "null" ? "" : String(v).trim();
+  const num = (v) => { const n = Number(String(v ?? "").replace(/[^\d,.-]/g, "").replace(/\.(?=\d{3}(\D|$))/g, "").replace(",", ".")); return isFinite(n) ? n : 0; };
+  const lineasIA = (Array.isArray(d.lineas) ? d.lineas : []).map((l) => ({
+    codigo: String(l?.codigo ?? "").trim().toUpperCase(), descripcion: String(l?.descripcion ?? "").trim(),
+    cantidad: num(l?.cantidad) || 1, precio: num(l?.precio), dto: 0 })).filter((l) => l.codigo || l.descripcion);
+  for (const [k, v] of Object.entries(d)) if (k !== "lineas") r[k] = v === null || v === "null" ? "" : String(v).trim();
+  // Nombre siempre delante de los apellidos
+  if (r.nombre_pila && r.apellidos) r.nombre = `${r.nombre_pila} ${r.apellidos}`;
+  else if (/^[^,]+,[^,]+$/.test(r.nombre || "")) { const [ap, no] = r.nombre.split(","); r.nombre = `${no.trim()} ${ap.trim()}`; }
+  delete r.nombre_pila; delete r.apellidos;
+  if (r.limite_importe) r.limite_importe = num(r.limite_importe) ? String(num(r.limite_importe)) : "";
   // Unifica el nombre de la aseguradora con la lista
   const a = (r.aseguradora || "").toLowerCase();
   const sin = (s) => s.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
@@ -1708,7 +1755,9 @@ function normalizar(d = {}) {
   }
   if (!telOK(r.telefono2) && enTexto.length) r.telefono2 = enTexto.shift();
   r.tipo = detectarTipo(r);
-  return aMayus(r);
+  const out = aMayus(r);
+  if (lineasIA.length) out.lineas = lineasIA;
+  return out;
 }
 
 // ------------------------------------------------------------------ Formulario (nuevo / editar)
@@ -1757,9 +1806,12 @@ async function vistaFormulario(id) {
           ? '<p class="aviso-campo">⚠️ Comprueba el teléfono cifra a cifra con el papel.</p>'
           : '<p class="aviso-campo">⚠️ No se ha podido leer un teléfono completo (9 cifras). Míralo en la descripción del trabajo o pídeselo al tramitador.</p>')
         : ""}
+      ${!id && (S.borrador?.datos?.lineas || []).length ? `<div class="aviso">📋 El parte trae <b>${S.borrador.datos.lineas.length} código(s)</b>${verPrecios() ? ` por ${fEuros(totalesLineas(S.borrador.datos.lineas).base)}` : ""}: se guardarán como <b>valoración ya autorizada</b>.<br><small>${S.borrador.datos.lineas.map((l) => esc(`${l.codigo} ${l.descripcion}`.trim())).join(" · ")}</small></div>` : ""}
       ${!id && S.borrador?.archivo ? avisosLectura(p).map((t) => `<p class="aviso-campo">⚠️ ${esc(t)}: revísalo con el papel.</p>`).join("") : ""}
       <div class="dos">${campo("telefono", "Teléfono", "tel")}${campo("telefono2", "Teléfono 2", "tel")}</div>
       <div class="dos">${campo("perjudicado_nombre", "Perjudicado (tercero)")}${campo("perjudicado_telefono", "Tel. perjudicado", "tel")}</div>
+      <div class="dos">${campo("modalidad", "Modalidad (Asistencia, Reparación…)")}${campo("limite_importe", "Límite de importe (€)", "number", 'step="0.01" inputmode="decimal"')}</div>
+      ${campo("aviso_cobertura", "Aviso de cobertura (p. ej. material no cubierto)")}
       ${campo("direccion", "Dirección")}
       <div class="tres">${campo("codigo_postal", "C.P.", "text", 'inputmode="numeric"')}${campo("poblacion", "Población")}${campo("provincia", "Provincia")}</div>
     </div>
@@ -1806,7 +1858,7 @@ async function vistaFormulario(id) {
     for (const k in f) if (f[k] === "") f[k] = null;
     if (f.fecha_cita) f.fecha_cita = new Date(f.fecha_cita).toISOString();
     if ("realizado_dia" in f) { if (f.realizado_dia) f.realizado_at = diaAISO(f.realizado_dia); delete f.realizado_dia; }
-    for (const k of ["importe_valorado", "importe_autorizado"]) if (f[k] != null) f[k] = Number(String(f[k]).replace(",", "."));
+    for (const k of ["importe_valorado", "importe_autorizado", "limite_importe"]) if (f[k] != null) f[k] = Number(String(f[k]).replace(",", "."));
     if (!f.aseguradora) return toast("Elige la aseguradora", "error");
     try {
       if (id) {
@@ -1833,7 +1885,7 @@ async function vistaFormulario(id) {
           f.cambios_repetido = rep.diffs.map((x) => x.txt).join(" · ");
         }
         const nuevo = await conCarga("Guardando…", async () => {
-          const n = await api.crearParte({ ...f, datos_ia: S.borrador?.archivo ? S.borrador.datos : null });
+          const n = await api.crearParte(conLineasIA({ ...f, datos_ia: S.borrador?.archivo ? S.borrador.datos : null }, S.borrador?.datos));
           if (S.borrador?.archivo) {
             const ext = S.borrador.mime === "application/pdf" ? "pdf" : "jpg";
             const path = await api.subirArchivo(`${n.id}/documento.${ext}`, S.borrador.archivo, S.borrador.mime);
@@ -1878,6 +1930,7 @@ async function vistaParte(id) {
     <button class="icono" id="menuParte" aria-label="Más opciones">${I.more}</button>
   </header>
 
+  ${avisoCobertura(p)}
   ${esConexion(p) ? `<div class="aviso cx-info">💬 <b>Conexión · presupuesto particular.</b> No es un encargo del seguro: el presupuesto se manda al cliente, con IVA (${ivaDe(p)} %), y lo paga él. No entra en la relación de ${esc(DEST.nombre)}.</div>` : ""}
   ${p.repetido_de ? `<div class="aviso repetido-info">🔁 <b>Parte repetido</b>${p.cambios_repetido ? ` · Cambios: ${esc(p.cambios_repetido)}` : ""}
     <br>${original ? `<a href="#/parte/${original.id}">Ver el parte anterior (${esc(original.estado ? estadoInfo(original.estado).nombre : "")}, ${fFecha(original.created_at)})</a>` : "El parte anterior ya no está en la lista (puede estar en la papelera)."}</div>` : ""}
@@ -1968,6 +2021,7 @@ async function vistaParte(id) {
 
   $("#volver").onclick = () => (location.hash = "/");
   $("#menuParte").onclick = () => menuParte(p);
+  if (S.abrirInforme === p.id) { S.abrirInforme = null; setTimeout(() => flujoInforme(p), 300); }
   $("#aContacto").onclick = () => guardarContacto(p);
   // Autorizar = confirmar la valoración código a código (si hay códigos valorados)
   const irAFase = (dest) => {
@@ -2384,11 +2438,12 @@ function sheetFase(p, destino) {
         if (firmaBlob) cambios.firma_path = await api.subirArchivo(`${p.id}/firma.png`, firmaBlob, "image/png");
         cargando(true, "Guardando…");
         if (Object.keys(cambios).length) await api.actualizarParte(p.id, cambios);
-        await api.anadirEvento(p.id, destino, nota);
+        if (destino && !atras) await anotarFase(p, destino, nota); else await api.anadirEvento(p.id, destino, nota);
       });
       toast(destino ? `Marcado como ${info.nombre.toLowerCase()}` : "Nota añadida", "ok");
       await vistaParte(p.id);
-      if (destino === "realizado" || destino === "visitado") {
+      // El envío a MULTIBETT se ofrece al valorar y al terminar (no al visitar)
+      if (destino === "realizado" || destino === "valorado") {
         const nuevo = await api.obtenerParte(p.id);
         flujoInforme(nuevo);
       }
@@ -2466,7 +2521,7 @@ async function flujoInforme(pIn) {
   const textoMsg = () => `Texto escrito${fotos.length ? ` y ${fotos.length} foto${fotos.length > 1 ? "s" : ""} adjunta${fotos.length > 1 ? "s" : ""}` : " (sin fotos)"}`;
   const hayLineas = (p.lineas_valoracion || []).length || (p.lineas_realizadas || []).length || p.importe_valorado != null;
   let precios = verPrecios() && (esConexion(p) || sessionGet("precios") !== "0");
-  const tipoInf = p.estado === "realizado" ? "trabajo terminado" : (esConexion(p) ? "presupuesto" : "visita");
+  const tipoInf = p.estado === "realizado" ? "trabajo terminado" : (esConexion(p) ? "presupuesto" : idxEstado(p.estado) >= idxEstado("valorado") ? "valoración" : "visita");
   const s = abrirSheet(`
     <h2>Enviar ${tipoInf} ${esc(aQuien(destinoDe(p).nombre))}</h2>
     ${esConexion(p) && !p.telefono ? '<p class="aviso-campo">⚠️ Este parte no tiene teléfono del cliente.</p>' : ""}
@@ -2618,7 +2673,10 @@ async function vistaLineas(id, tipo) {
 
   const pintarTotales = () => {
     const t = totalesLineas(lineas, ivaDe(p));
-    $("#totales").innerHTML = htmlTotales(t, ivaDe(p));
+    const lim = Number(p.limite_importe) || 0;
+    $("#totales").innerHTML = htmlTotales(t, ivaDe(p))
+      + (lim && t.base > lim ? `<p class="aviso-campo">⚠️ Pasa del límite del parte (${fEuros(lim)}): ${fEuros(t.base - lim)} de más.</p>` : "")
+      + (lim && t.base <= lim ? `<p class="suave">Límite del parte: ${fEuros(lim)}</p>` : "");
   };
   const pintarLineas = () => {
     const c = $("#lineas");
@@ -2703,6 +2761,9 @@ async function vistaLineas(id, tipo) {
     const limpias = lineas.filter((l) => l.descripcion.trim() || l.codigo).map((l) => ({ ...l, cantidad: Number(l.cantidad) || 0, precio: Number(l.precio) || 0, dto: Number(l.dto) || 0 }));
     const cambios = { [campo]: limpias };
     if (tipo === "valoracion") cambios.importe_valorado = totalesLineas(limpias).base;
+    // Guardar la valoración con códigos deja el parte como valorado (y ofrece mandarla)
+    const valoraAhora = tipo === "valoracion" && limpias.length && idxEstado(p.estado) < idxEstado("valorado");
+    if (valoraAhora) cambios.estado = "valorado";
     const autorizaAhora = tipo === "autorizados" && limpias.length && idxEstado(p.estado) < idxEstado("autorizado");
     if (tipo === "autorizados") {
       cambios.importe_autorizado = limpias.length ? totalesLineas(limpias).base : null;
@@ -2710,9 +2771,12 @@ async function vistaLineas(id, tipo) {
     }
     await conCarga("Guardando…", async () => {
       await api.actualizarParte(id, cambios);
-      if (autorizaAhora) await api.anadirEvento(id, "autorizado", `Valoración confirmada: ${limpias.length} código(s), ${fEuros(cambios.importe_autorizado)} sin IVA.`);
+      if (autorizaAhora) await anotarFase(p, "autorizado", `Valoración confirmada: ${limpias.length} código(s), ${fEuros(cambios.importe_autorizado)} sin IVA.`);
+      if (valoraAhora) await anotarFase(p, "valorado", `Valoración: ${limpias.length} código(s), ${fEuros(cambios.importe_valorado)} sin IVA.`);
     });
-    sucio = false; toast("Guardado", "ok"); location.hash = "/parte/" + id;
+    sucio = false; toast(valoraAhora ? "Valoración guardada: parte valorado" : "Guardado", "ok");
+    if (valoraAhora) S.abrirInforme = id;
+    location.hash = "/parte/" + id;
   };
   pintarLineas();
 }

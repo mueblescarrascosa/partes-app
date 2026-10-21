@@ -6,8 +6,8 @@
 // ============================================================
 window.APP_CONFIG = {
   // Versión de la app y autor (se muestra en el pie de la app)
-  VERSION: "2.9.1",
-  FECHA_VERSION: "06/10/2026",
+  VERSION: "2.10.0",
+  FECHA_VERSION: "21/10/2026",
   AUTOR: "Alfonso Carrascosa Martínez",
   IDEA: "José Carlos Carrascosa Martínez",
   HECHA_CON: "Desarrollada con ayuda de Claude (Anthropic)",
@@ -30,7 +30,7 @@ window.APP_CONFIG = {
   DESTINO_INFORMES: { nombre: "MULTIBETT", telefono: "680412264" },
 
   // Aseguradoras que salen en el selector (puedes añadir más)
-  ASEGURADORAS: ["Mapfre", "Santalucía", "Iris Global", "Caser", "Allianz", "AXA", "Generali", "Reale", "Mutua Madrileña", "Otra"],
+  ASEGURADORAS: ["Mapfre", "Santalucía", "Iris Global", "Caser", "Allianz", "AXA", "Generali", "Reale", "Mutua Madrileña", "Asyrep", "Otra"],
 
   // App de WhatsApp en Android: "business" (WhatsApp Business) o "normal"
   WHATSAPP_APP: "business",
