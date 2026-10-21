@@ -24,7 +24,9 @@ Extrae los datos del documento y responde ÚNICAMENTE con un objeto JSON, sin te
   "num_siniestro": "número de SINIESTRO si es distinto del expediente (p.ej. 'Nº SINIESTRO (NES)')",
   "poliza": "número de póliza (solo si aparece un número de póliza real; nombres de producto o convenio como 'INTEGRAL KBS' NO son póliza)",
   "fecha_encargo": "fecha del ENCARGO (campo 'F. ENCARGO'; NO la fecha de ocurrencia ni de comunicación) en formato AAAA-MM-DD",
-  "nombre": "nombre y apellidos del asegurado o persona de contacto",
+  "nombre": "nombre y apellidos del asegurado o persona de contacto, SIEMPRE con el nombre de pila delante y los apellidos detrás (\"Alba María Aragón Gómez\", nunca \"Aragón Gómez, Alba María\")",
+  "nombre_pila": "solo el nombre de pila del asegurado (p.ej. \"Alba María\"); null si no se distingue",
+  "apellidos": "solo los apellidos del asegurado (p.ej. \"Aragón Gómez\"); null si no se distinguen",
   "direccion": "calle, número, piso y puerta del riesgo",
   "codigo_postal": "",
   "poblacion": "",
@@ -33,6 +35,10 @@ Extrae los datos del documento y responde ÚNICAMENTE con un objeto JSON, sin te
   "telefono2": "otro teléfono del asegurado si hay",
   "perjudicado_nombre": "nombre del PERJUDICADO o tercero afectado (p.ej. el vecino de abajo al que le ha caído el agua), SOLO si el parte lo identifica como perjudicado/tercero/contrario/afectado. NO es el asegurado. null si no aparece",
   "perjudicado_telefono": "teléfono del perjudicado o tercero (9 cifras), solo si el parte indica que es suyo. null si no aparece",
+  "modalidad": "modalidad o tipo de servicio si el parte la indica: 'Asistencia', 'Reparación', 'Bricolaje', 'Manitas', 'Hogar', etc. null si no aparece",
+  "aviso_cobertura": "frase corta si el parte limita lo que cubre: p.ej. 'Solo mano de obra, el material lo paga el cliente', 'Material no cubierto', 'Franquicia 150 €', 'No reparar sin autorización'. null si no hay",
+  "limite_importe": "número: importe máximo que indica el parte para el arreglo o el presupuesto (p.ej. 'límite de 300 €', 'no superar 400 euros', 'presupuesto máximo 250'). Solo el número; null si no hay",
+  "lineas": "lista de los trabajos YA VALORADOS que vienen en el propio parte (tabla de códigos con importes, p.ej. 'CÓDIGO Nº / DESCRIPCIÓN / UNIDADES / IMPORTE'): [{\"codigo\": \"5129\", \"descripcion\": \"...\", \"cantidad\": 1, \"precio\": 53.3}] con el precio por unidad sin IVA. Si la tabla está vacía o no hay códigos, []",
   "averia": "descripción clara del daño o avería y del trabajo encargado (causa, estancia afectada, gremio)",
   "tramitador_nombre": "nombre del tramitador/gestor de la compañía",
   "tramitador_telefono": "teléfono del tramitador",
@@ -52,6 +58,7 @@ Formatos conocidos:
   · direccion = columna "Domicilio" (puede venir cortada; cópiala tal cual); poblacion = "Código Postal - Población" (si solo hay población, codigo_postal = null).
   · fecha_encargo = "F.Entrada" de la tabla (solo la fecha). NO uses "Fecha Ocurrencia" ni "Fecha Inicio".
   · averia = gremio de la columna "Act" + "Tipo Encargo" + "Causa siniestro", p.ej. "Carpintería de madera – Fenómenos atmosféricos (lluvia). Ramo: Combinado del Hogar. Fecha ocurrencia 17/02/2026". Añade el texto de la nota si hay alguno relevante sobre el daño.
+- ASYREP: NO es una aseguradora sino una empresa intermediaria de la zona (a veces los partes llegan reenviados por MULTIBETT). Si el parte es de ASYREP (logo o texto "ASYREP" / "Asyrep"), aseguradora = "Asyrep". El expediente suele tener el formato "AS.2026/1639116": cópialo entero, con el "AS." y la barra. Si en el parte aparece además la compañía aseguradora final, menciónala al principio de averia ("Compañía: X").
 - MAPFRE: cabecera "MAPFRE ESPAÑA, S.A. / Parte de Trabajo <GREMIO>". expediente = "Nº de Expediente" (tipo V73739261, también aparece al final de "Referencia"); poliza = "Nº Póliza"; fecha_encargo = "Fecha" de la cabecera; tramitador_nombre = "Tramitador del Expediente"; telefono = "Teléfonos de contacto". En averia empieza por el gremio del título (p.ej. "CERRADURAS: ...") y usa la "Descripción del expediente" si aparece; el texto "CLIENTE PLATINO / atención prioritaria..." resúmelo como "Cliente platino: contactar en menos de 12 h".
 
 Reglas:
@@ -73,7 +80,8 @@ Reglas:
 - OTRAS COMPAÑÍAS EN EL TEXTO: a veces la descripción cita la póliza o el expediente de OTRA compañía (p.ej. un parte de Iris Global que dice "POL 0762200017150 Mapfre exp V70261021 CCPP", datos de la comunidad de propietarios). Eso NO cambia la aseguradora ni el expediente: la compañía es la del logo/cabecera y el expediente, el de su campo. Déjalo en averia como información.
 - EÑES PERDIDAS: algunos sistemas imprimen la Ñ como espacio o símbolo ("MU OZ", "ESPA/A", "CASTA O"). Escríbelo bien: MUÑOZ, ESPAÑA, CASTAÑO.
 - PERJUDICADO / TERCERO: algunos partes traen, además del asegurado, los datos de un perjudicado (casillas o textos como "Perjudicado", "Tercero", "Contrario", "Afectado", "Vecino perjudicado", "Datos del perjudicado", "Tlf. perjudicado"). Esos datos van SOLO en perjudicado_nombre y perjudicado_telefono: nunca en nombre, telefono ni telefono2. Si el trabajo se hace en casa del perjudicado, igualmente nombre = asegurado. Si no hay perjudicado, ambos null.
-- MAPFRE escribe el nombre como "APELLIDOS,NOMBRE" ("ARAGON GOMEZ,ALBA MARIA"): devuélvelo como "ALBA MARIA ARAGON GOMEZ".
+- NOMBRE DELANTE: MAPFRE (y a veces otros) escribe el nombre como "APELLIDOS,NOMBRE" ("ARAGON GOMEZ,ALBA MARIA") o "APELLIDO1 APELLIDO2 NOMBRE": devuélvelo SIEMPRE como "ALBA MARIA ARAGON GOMEZ" y rellena nombre_pila y apellidos por separado. En España lo normal son dos apellidos: si dudas, los dos últimos de "nombre" deben ser los apellidos.
+- CÓDIGOS EN EL PARTE: si el parte ya trae una tabla de trabajos con códigos y precios (valorado por la compañía o MULTIBETT), cópiala en lineas tal cual, una entrada por fila con código, descripción, cantidad y precio unitario. Las filas vacías no cuentan.
 - Fechas en formato AAAA-MM-DD; en España las fechas del documento van como DD/MM/AAAA. Copia el día cifra a cifra tal como está escrito; no uses la fecha de hoy ni la calcules.`;
 
 type Entrada = { data: string; mime: string };
@@ -124,7 +132,7 @@ async function conAnthropic({ data, mime }: Entrada) {
       },
       body: JSON.stringify({
         model,
-        max_tokens: 1500,
+        max_tokens: 2500,
         temperature: 0,
         messages: [{ role: "user", content: [bloque, { type: "text", text: PROMPT }] }],
       }),
