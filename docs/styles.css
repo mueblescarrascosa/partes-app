@@ -422,3 +422,6 @@ body.con-sel .lista { padding-bottom: 90px; }
 .rev-botones { display: grid; grid-template-columns: 2fr 1fr 1fr; gap: 8px; }
 .rev-botones .btn { justify-content: center; }
 .rep-info { display: block; color: #0f766e; font-weight: 600; margin-top: 2px; }
+.cobertura-info { background: #fff7ed; border-color: #fdba74; color: #7c2d12; }
+.as-badge { background: #ffedd5; color: #9a3412; }
+.lim-badge { background: #ecfdf5; color: #065f46; }
