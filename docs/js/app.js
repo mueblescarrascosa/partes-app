@@ -849,17 +849,17 @@ async function fechaDeFoto(file) {
 }
 
 // Al saltar a una fase, se anotan también las anteriores que faltaban, en su orden, unos segundos antes cada una
-async function anotarFase(p, destino, nota) {
+// prog.n = eventos ya guardados: si falla a mitad, al reintentar no se repiten
+async function anotarFase(p, destino, nota, prog = { n: 0 }) {
   const desde = idxEstado(p.estado), hasta = idxEstado(destino);
   const ahora = Date.now();
-  if (destino && hasta > desde + 1) {
-    const faltan = ESTADOS.slice(desde + 1, hasta);
-    for (let i = 0; i < faltan.length; i++) {
-      await api.anadirEvento(p.id, faltan[i].id, "Marcado automáticamente al pasar a una fase posterior.",
-        new Date(ahora - (faltan.length - i) * 1000).toISOString());   // segundos antes: el orden queda siempre el establecido
-    }
+  const faltan = destino && hasta > desde + 1 ? ESTADOS.slice(desde + 1, hasta) : [];
+  for (let i = prog.n; i < faltan.length; i++) {
+    await api.anadirEvento(p.id, faltan[i].id, "Marcado automáticamente al pasar a una fase posterior.",
+      new Date(ahora - (faltan.length - i) * 1000).toISOString());   // segundos antes: el orden queda siempre el establecido
+    prog.n = i + 1;
   }
-  await api.anadirEvento(p.id, destino, nota, new Date(ahora).toISOString());
+  if (prog.n <= faltan.length) { await api.anadirEvento(p.id, destino, nota, new Date(ahora).toISOString()); prog.n = faltan.length + 1; }
 }
 
 // ---- Marcar partes hechos rápido (uno, varios o revisando los atascados)
@@ -2409,16 +2409,17 @@ async function enderezarFoto(p, f) {
   });
 }
 
-async function subirFotos(p, files, tipo, giros = []) {
+// prog.n = fotos ya guardadas: si falla a mitad, al reintentar se sigue por la siguiente sin duplicar
+async function subirFotos(p, files, tipo, giros = [], prog = { n: 0 }) {
   // Solo hay un parte firmado: el nuevo sustituye al anterior, pero el anterior no se borra hasta tener el nuevo guardado
   const previos = tipo === "firmado" ? (p.fotos || []).filter((f) => f.tipo === "firmado") : [];
   if (tipo === "firmado") files = files.slice(0, 1);
-  let n = 0;
-  for (const file of files) {
-    cargando(true, `Subiendo foto ${++n} de ${files.length}…`);
-    const blob = await comprimirImagen(file, 1600, 0.8, giros[n - 1] || 0);
-    const path = await api.subirArchivo(`${p.id}/foto_${Date.now()}_${n}.jpg`, blob, "image/jpeg");
+  for (let k = prog.n; k < files.length; k++) {
+    cargando(true, `Subiendo foto ${k + 1} de ${files.length}…`);
+    const blob = await comprimirImagen(files[k], 1600, 0.8, giros[k] || 0);
+    const path = await api.subirArchivo(`${p.id}/foto_${Date.now()}_${k + 1}.jpg`, blob, "image/jpeg");
     await api.anadirFoto(p.id, path, tipo);
+    prog.n = k + 1;
   }
   // Si esto falla quedan dos firmados: se usa siempre el último (firmadoDe) y el viejo se puede borrar a mano
   for (const f of previos) await api.borrarFoto(f).catch(() => {});
@@ -2609,10 +2610,14 @@ const PREGUNTA = {
 function sheetFase(p, destino) {
   const info = destino ? estadoInfo(destino) : null;
   const atras = destino && idxEstado(destino) < idxEstado(p.estado);
+  // Borrador de la nota en el móvil: si se cierra la app o falla el guardado, no se pierde lo escrito
+  const claveNota = `notaBorrador_${p.id}_${destino || "nota"}`;
+  const borrador = sessionGet(claveNota) || "";
   const s = abrirSheet(`
     <h2>${info ? `${atras ? "Volver a" : "Marcar como"} <span style="color:${info.color}">${info.nombre}</span>` : "Añadir nota"}</h2>
     <form id="fFase" class="form">
-      <label>${PREGUNTA[destino]}<textarea name="nota" rows="4" placeholder="${destino === "contactado" ? "Ej.: le viene bien el martes por la tarde, hay que llamar antes de ir…" : ""}"></textarea></label>
+      <label>${PREGUNTA[destino]}<textarea name="nota" rows="4" placeholder="${destino === "contactado" ? "Ej.: le viene bien el martes por la tarde, hay que llamar antes de ir…" : ""}">${esc(borrador)}</textarea></label>
+      ${borrador ? '<small class="suave" style="margin-top:-.4em">📝 Nota recuperada: no se llegó a guardar.</small>' : ""}
       ${destino === "contactado" ? `<label>Fecha y hora de la visita<input type="datetime-local" name="fecha_cita" value="${toLocalInput(p.fecha_cita)}"></label>` : ""}
       ${destino === "valorado" ? `<a class="btn ancho" href="#/lineas/${p.id}/valoracion">📋 ${(p.lineas_valoracion || []).length ? "Revisar" : "Meter"} códigos de la tarifa</a>
         <label class="precio">Importe valorado (€, sin IVA)<input type="number" step="0.01" inputmode="decimal" name="importe_valorado" value="${(p.lineas_valoracion || []).length ? totalesLineas(p.lineas_valoracion).base : (p.importe_valorado ?? "")}"></label>` : ""}
@@ -2625,13 +2630,17 @@ function sheetFase(p, destino) {
         <label class="btn ancho">${I.cam} Fotos del trabajo terminado<input type="file" accept="image/*" multiple hidden name="fotos" data-tipo="despues"></label><small class="suave" id="nFotos"></small><div id="pvFotos"></div>
         <div class="firma-caja"><div class="h3-fila"><b>Firma del cliente</b><button type="button" class="btn texto peq" id="limpiarFirma">Borrar</button></div>
           <canvas id="firma"></canvas><small class="suave">${p.firma_path ? "Ya hay una firma guardada; si firmas de nuevo se sustituye." : "Opcional. Pide al cliente que firme con el dedo."}</small></div>` : ""}
+      <p class="aviso-rojo" id="fError" hidden>No se ha podido guardar. Revisa la conexión y vuelve a pulsar <b>Guardar</b>: lo que ya se había guardado no se repite.</p>
       <div class="pie-form">
         <button type="button" class="btn" data-cerrar>Cancelar</button>
         <button type="submit" class="btn primario" ${info ? `style="--c:${info.color}"` : ""}>Guardar</button>
       </div>
     </form>`);
+  $("textarea[name=nota]", s).addEventListener("input", (e) => sessionSet(claveNota, e.target.value));
   const inFotos = $("input[name=fotos]", s);
   const inFirmado = $("input[name=firmado]", s);
+  // Lo ya guardado en un intento anterior que falló a mitad (para no repetirlo al reintentar)
+  const hecho = { firmado: { n: 0 }, fotos: { n: 0 }, eventos: { n: 0 } };
   // La fecha del trabajo se toma sola de la foto del parte firmado (o de la última foto del después)
   const inDia = $("input[name=realizado_dia]", s);
   const fechaDesdeFotos = async () => {
@@ -2644,8 +2653,8 @@ function sheetFase(p, destino) {
   };
   // Miniaturas con ↻ para enderezar antes de guardar
   let pvFirmado = null, pvFotos = null;
-  inFirmado?.addEventListener("change", () => { if (inFirmado.files.length) $("#nFirmado", s).textContent = "✅ Parte firmado listo para guardar"; pvFirmado?.liberar(); pvFirmado = previaFotos($("#pvFirmado", s), [...inFirmado.files]); fechaDesdeFotos(); });
-  inFotos?.addEventListener("change", () => { $("#nFotos", s).textContent = `${inFotos.files.length} foto(s) seleccionada(s)`; pvFotos?.liberar(); pvFotos = previaFotos($("#pvFotos", s), [...inFotos.files]); fechaDesdeFotos(); });
+  inFirmado?.addEventListener("change", () => { hecho.firmado.n = 0; if (inFirmado.files.length) $("#nFirmado", s).textContent = "✅ Parte firmado listo para guardar"; pvFirmado?.liberar(); pvFirmado = previaFotos($("#pvFirmado", s), [...inFirmado.files]); fechaDesdeFotos(); });
+  inFotos?.addEventListener("change", () => { hecho.fotos.n = 0; $("#nFotos", s).textContent = `${inFotos.files.length} foto(s) seleccionada(s)`; pvFotos?.liberar(); pvFotos = previaFotos($("#pvFotos", s), [...inFotos.files]); fechaDesdeFotos(); });
   let firma = null;
   if (destino === "realizado") {
     firma = panelFirma($("#firma", s));
@@ -2669,16 +2678,27 @@ function sheetFase(p, destino) {
     const fotos = inFotos ? [...inFotos.files] : [];
     const firmadoFile = inFirmado?.files[0] || null;
     const firmaBlob = firma && !firma.vacio ? await firma.aBlob() : null;
-    cerrarSheet();
+    // La ventana sigue abierta hasta que todo esté guardado: si falla, no se pierde nada y se puede reintentar
+    const btn = ev.target.querySelector("[type=submit]");
+    btn.disabled = true; $("#fError", s).hidden = true;
     try {
       await conCarga("Guardando…", async () => {
-        if (firmadoFile) await subirFotos(p, [firmadoFile], "firmado", pvFirmado?.giros);
-        if (fotos.length) await subirFotos(p, fotos, inFotos.dataset.tipo, pvFotos?.giros);
+        if (firmadoFile) await subirFotos(p, [firmadoFile], "firmado", pvFirmado?.giros, hecho.firmado);
+        if (fotos.length) await subirFotos(p, fotos, inFotos.dataset.tipo, pvFotos?.giros, hecho.fotos);
+        // La firma y los cambios del parte se pueden repetir sin duplicar nada (mismo archivo, mismos valores)
         if (firmaBlob) cambios.firma_path = await api.subirArchivo(`${p.id}/firma.png`, firmaBlob, "image/png");
         cargando(true, "Guardando…");
         if (Object.keys(cambios).length) await api.actualizarParte(p.id, cambios);
-        if (destino && !atras) await anotarFase(p, destino, nota); else await api.anadirEvento(p.id, destino, nota);
+        if (destino && !atras) await anotarFase(p, destino, nota, hecho.eventos);
+        else if (!hecho.eventos.n) { await api.anadirEvento(p.id, destino, nota); hecho.eventos.n = 1; }
       });
+    } catch {
+      btn.disabled = false; $("#fError", s).hidden = false;
+      return;
+    }
+    sessionSet(claveNota, "");
+    cerrarSheet();
+    try {
       toast(destino ? `Marcado como ${info.nombre.toLowerCase()}` : "Nota añadida", "ok");
       await vistaParte(p.id);
       // El envío a MULTIBETT se ofrece al valorar y al terminar (no al visitar)
