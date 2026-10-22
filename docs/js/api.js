@@ -9,6 +9,11 @@ function crearApiSupabase() {
   });
   const ok = ({ data, error }) => { if (error) throw error; return data; };
   let yo = null;
+  // Usuario de solo lectura (y no admin): no puede leer partes ni eventos directamente, sino las vistas
+  // sin importes partes_lector y eventos_lector. Lo decide Supabase; aquí solo se elige de dónde leer.
+  let lector = false;
+  const tablaPartes = () => (lector ? "partes_lector" : "partes");
+  const tablaEventos = () => (lector ? "eventos_lector" : "eventos");
 
   // Supabase devuelve como mucho 1.000 filas por consulta: las listas se leen en bloques.
   // Los bloques van ordenados por la clave única (no cambia aunque alguien edite mientras se lee)
@@ -34,7 +39,7 @@ function crearApiSupabase() {
     async entrar(email, password) {
       ok(await sb.auth.signInWithPassword({ email, password }));
     },
-    async salir() { yo = null; await sb.auth.signOut(); },
+    async salir() { yo = null; lector = false; await sb.auth.signOut(); },
     async recuperar(email) {
       ok(await sb.auth.resetPasswordForEmail(email, { redirectTo: location.origin + location.pathname }));
     },
@@ -45,12 +50,13 @@ function crearApiSupabase() {
       if (!user) return null;
       const m = ok(await sb.from("miembros").select("*").eq("user_id", user.id).maybeSingle());
       yo = m ? { ...m, email: user.email } : { user_id: user.id, email: user.email, nombre: null };
+      lector = !!(m?.solo_lectura && !m?.es_admin);
       return yo;
     },
-    async miembros() { return ok(await sb.from("miembros").select("user_id,nombre,telefono,es_admin,ver_precios").order("nombre")); },
+    async miembros() { return ok(await sb.from("miembros").select("user_id,nombre,telefono,es_admin,ver_precios,solo_lectura").order("nombre")); },
 
     async listarPartes() {
-      const r = await leerTodo(() => sb.from("partes").select("*").is("borrado_at", null));
+      const r = await leerTodo(() => sb.from(tablaPartes()).select("*").is("borrado_at", null));
       return r.sort(porFecha("updated_at", true));
     },
     async usoIA(desde) {
@@ -76,8 +82,8 @@ function crearApiSupabase() {
     },
     async obtenerParte(id) {
       const [p, ev, fo] = await Promise.all([
-        sb.from("partes").select("*").eq("id", id).single(),
-        leerTodo(() => sb.from("eventos").select("*").eq("parte_id", id)),
+        sb.from(tablaPartes()).select("*").eq("id", id).single(),
+        leerTodo(() => sb.from(tablaEventos()).select("*").eq("parte_id", id)),
         leerTodo(() => sb.from("fotos").select("*").eq("parte_id", id)),
       ]);
       return { ...ok(p), eventos: ev.sort(porFecha("created_at")), fotos: fo.sort(porFecha("created_at")) };
@@ -122,7 +128,8 @@ function crearApiSupabase() {
     async borrarEvento(id) { ok(await sb.from("eventos").delete().eq("id", id)); },
 
     async subirArchivo(path, blob, contentType) {
-      ok(await sb.storage.from(BUCKET).upload(path, blob, { contentType, upsert: true }));
+      // El lector no puede sobrescribir (tampoco lo necesita: sus fotos y bocetos tienen nombre único)
+      ok(await sb.storage.from(BUCKET).upload(path, blob, { contentType, upsert: !lector }));
       return path;
     },
     async urlArchivo(path, segundos = 3600) {

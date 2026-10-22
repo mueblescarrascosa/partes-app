@@ -46,10 +46,15 @@ const S = {
   borrador: null, // parte nuevo pendiente de guardar {datos, archivo, mime}
 };
 
-// Usuarios sin permiso de precios: la app no les muestra importes (solo se oculta en pantalla).
-const verPrecios = () => api.modo !== "supabase" ? sessionGet("demoSinPrecios") !== "1" : (S.yo?.es_admin || S.yo?.ver_precios !== false);
+// Usuarios de solo lectura (miembros.solo_lectura, nunca un admin): ven los partes sin importes (lo bloquea Supabase:
+// leen de las vistas partes_lector y eventos_lector) y solo pueden añadir notas, fotos y bocetos y borrar los suyos.
+// En el modo demo se simula desde el menú de usuario.
+const esLector = () => api.modo !== "supabase" ? sessionGet("demoLector") === "1" : !!(S.yo?.solo_lectura && !S.yo?.es_admin);
+const RUTAS_ESCRITURA = ["nuevo", "editar", "lineas", "lote", "revision", "papelera"];
+// Usuarios sin permiso de precios: la app no les muestra importes (solo se oculta en pantalla; a los lectores, además, Supabase no se los da).
+const verPrecios = () => !esLector() && (api.modo !== "supabase" ? sessionGet("demoSinPrecios") !== "1" : (S.yo?.es_admin || S.yo?.ver_precios !== false));
 // Mismos permisos que las reglas de Supabase: el historial solo lo edita un admin; fotos y bocetos, su autor o un admin
-const esAdmin = () => api.modo !== "supabase" || !!S.yo?.es_admin;
+const esAdmin = () => !esLector() && (api.modo !== "supabase" || !!S.yo?.es_admin);
 const puedeBorrarFoto = (f) => esAdmin() || f.creado_por === S.yo?.user_id;
 function sessionGet(k) { try { return localStorage.getItem("pa_" + k); } catch { return null; } }
 function sessionSet(k, v) { try { localStorage.setItem("pa_" + k, v); } catch { /* nada */ } }
@@ -144,7 +149,9 @@ async function router() {
   if (!ajustesCargados) await cargarAjustes();
   if (api.modo === "supabase" && !S.yo?.nombre) return vistaSinAcceso();
   document.body.classList.toggle("sin-precios", !verPrecios());
+  document.body.classList.toggle("solo-lectura", esLector());
   const [, ruta, id] = h.split("/");
+  if (esLector() && RUTAS_ESCRITURA.includes(ruta)) { location.hash = "/"; return; }
   document.body.dataset.vista = ruta || "lista";
   window.scrollTo(0, 0);
   if (!ruta) return vistaLista();
@@ -157,7 +164,7 @@ async function router() {
   if (ruta === "agenda") return vistaAgenda();
   if (ruta === "revision") return vistaRevision();
   if (ruta === "lote") return vistaLote();
-  if (ruta === "facturacion") return (S.yo?.es_admin || api.modo !== "supabase") ? vistaFacturacion() : (location.hash = "/");
+  if (ruta === "facturacion") return esAdmin() ? vistaFacturacion() : (location.hash = "/");
   if (ruta === "tarifa") return S.yo?.es_admin ? vistaTarifa() : (location.hash = "/");
   if (ruta === "ajustes") return S.yo?.es_admin ? vistaAjustes() : (location.hash = "/");
   location.hash = "/";
@@ -227,21 +234,21 @@ async function vistaLista() {
       ${[["recientes", "Últimos movidos"], ["antiguos", "Más días primero"], ["cita", "Próxima cita"], ["nuevos", "Últimos entrados"]].map(([v, t]) => `<option value="${v}" ${S.orden === v ? "selected" : ""}>${t}</option>`).join("")}
     </select>
     <button class="btn peq" id="btnFiltros">⚙️ Más filtros<b id="nFiltros"></b></button>
-    <button class="btn peq" id="btnSel" title="O mantén pulsado un parte">☑ Seleccionar</button>
+    ${esLector() ? "" : '<button class="btn peq" id="btnSel" title="O mantén pulsado un parte">☑ Seleccionar</button>'}
   </div>
   <div class="filtros-activos" id="fActivos"></div>
   <div id="avisoLote"></div>
   <main id="lista" class="lista"><div class="vacio">Cargando…</div></main>
-  <button class="fab" id="nuevo" aria-label="Nuevo parte">${I.plus}</button>`;
+  ${esLector() ? "" : `<button class="fab" id="nuevo" aria-label="Nuevo parte">${I.plus}</button>`}`;
 
   $("#busca").addEventListener("input", (e) => { S.busqueda = e.target.value; pintarLista(); });
   $("#soloMios").addEventListener("change", (e) => { S.soloMios = e.target.checked; sessionSet("soloMios", S.soloMios ? "1" : "0"); pintarLista(); });
   $("#fAseg").addEventListener("change", (e) => { S.filtroAseg = e.target.value; sessionSet("filtroAseg", S.filtroAseg); pintarLista(); });
   $("#orden").addEventListener("change", (e) => { S.orden = e.target.value; sessionSet("orden", S.orden); pintarLista(); });
   $("#btnFiltros").addEventListener("click", sheetFiltros);
-  $("#btnSel").addEventListener("click", () => { S.sel = S.sel ? null : new Set(); if (S.sel) toast("Toca los partes para elegirlos", "ok"); pintarLista(); });
+  $("#btnSel")?.addEventListener("click", () => { S.sel = S.sel ? null : new Set(); if (S.sel) toast("Toca los partes para elegirlos", "ok"); pintarLista(); });
   $("#btnResumen").addEventListener("click", () => sheetResumen(true));
-  $("#nuevo").addEventListener("click", menuNuevo);
+  $("#nuevo")?.addEventListener("click", menuNuevo);
   $("#recargar").addEventListener("click", cargarPartes);
   $("#menuUsuario").addEventListener("click", menuUsuario);
   $("#btnInstalar")?.addEventListener("click", instalarApp);
@@ -301,14 +308,14 @@ function pintarLista() {
 
   const cont = $("#lista");
   if (!lista.length) {
-    cont.innerHTML = `<div class="vacio">${S.partes.length ? "No hay partes con este filtro." : "Aún no hay partes.<br>Pulsa <b>+</b> para escanear el primero."}</div>`;
+    cont.innerHTML = `<div class="vacio">${S.partes.length ? "No hay partes con este filtro." : esLector() ? "Aún no hay partes." : "Aún no hay partes.<br>Pulsa <b>+</b> para escanear el primero."}</div>`;
     return;
   }
   cont.innerHTML = lista.map(tarjetaParte).join("");
   const porId = (id) => S.partes.find((x) => x.id === id);
   $$(".parte", cont).forEach((el) => {
     let t = null, largo = false;
-    el.addEventListener("pointerdown", () => { largo = false; t = setTimeout(() => { largo = true; if (!S.sel) S.sel = new Set(); S.sel.add(el.dataset.id); navigator.vibrate?.(30); pintarLista(); }, 550); });
+    el.addEventListener("pointerdown", () => { largo = false; if (esLector()) return; t = setTimeout(() => { largo = true; if (!S.sel) S.sel = new Set(); S.sel.add(el.dataset.id); navigator.vibrate?.(30); pintarLista(); }, 550); });
     ["pointerup", "pointerleave", "pointercancel"].forEach((ev) => el.addEventListener(ev, () => clearTimeout(t)));
     el.addEventListener("contextmenu", (e) => e.preventDefault());
     el.addEventListener("click", (e) => {
@@ -446,15 +453,15 @@ function datosResumen() {
     { k: "falta", v: "valorar", t: "📋 Visitados sin valorar", n: cuenta("falta", "valorar"), aviso: true },
     { k: "falta", v: "autorizar", t: "⏳ Valorados sin respuesta (más de 7 días)", n: cuenta("falta", "autorizar"), aviso: true },
     { k: "falta", v: "terminar", t: "🔧 Autorizados pendientes de hacer", n: cuenta("falta", "terminar"), aviso: false },
-    { ir: "/revision", t: "✅ ¿Están hechos? Revisar autorizados y citas pasadas", n: candidatosRevision().length, aviso: true },
+    ...(esLector() ? [] : [{ ir: "/revision", t: "✅ ¿Están hechos? Revisar autorizados y citas pasadas", n: candidatosRevision().length, aviso: true }]),
     { k: "dias", v: "30", t: "🔴 Atascados (más de 30 días)", n: ps.filter((p) => p.estado !== "realizado" && diasParte(p) > 30).length, aviso: true },
-    ...((S.yo?.es_admin || api.modo !== "supabase") && ps.length ? (() => {
+    ...(esAdmin() && ps.length ? (() => {
       const ult = CFG.ULTIMA_COPIA || sessionGet("ultimaCopia");
       const dias = ult ? Math.floor((Date.now() - new Date(ult)) / 864e5) : null;
       const toca = dias == null || dias >= DIAS_COPIA;
       return [{ accion: copiaSeguridad, t: `💾 Copia de seguridad: ${ult ? (dias === 0 ? "hecha hoy" : `última hace ${dias} día${dias === 1 ? "" : "s"}`) : "nunca hecha"}${toca ? " · pulsa para descargarla" : ""}`, n: toca ? 1 : 0, aviso: toca }];
     })() : []),
-    ...(verPrecios() && (S.yo?.es_admin || api.modo !== "supabase") ? (() => {
+    ...(verPrecios() && esAdmin() ? (() => {
       const f = datosFacturacion();
       return [
         { ir: "/facturacion", t: "🧾 Terminados de meses anteriores sin facturar", n: f.sinFacturarAnteriores.length, aviso: true },
@@ -583,7 +590,7 @@ async function copiaSeguridad() {
       sessionSet("ultimaCopia", ahora);
       CFG.ULTIMA_COPIA = ahora;
       // Se apunta en los ajustes compartidos para que el aviso valga para todos los móviles
-      if (S.yo?.es_admin || api.modo !== "supabase") {
+      if (esAdmin()) {
         try { const a = await api.leerAjustes(); await api.guardarAjustes({ ...a, ULTIMA_COPIA: ahora }); } catch { /* no pasa nada */ }
       }
     });
@@ -1068,7 +1075,7 @@ function tarjetaParte(p) {
     <div class="parte-pie">
       <span>${p.fecha_cita && ["contactado"].includes(p.estado) ? `📅 Cita ${fFechaHora(p.fecha_cita)}` : hace(p.updated_at)}${asignado ? " · " + esc(asignado) : ""}</span>
       <span class="parte-acc">
-        ${p.estado !== "realizado" ? `<button class="mini hecho" data-hecho="${p.id}" aria-label="Marcar como realizado" title="Marcar como realizado">✓</button>` : ""}
+        ${p.estado !== "realizado" && !esLector() ? `<button class="mini hecho" data-hecho="${p.id}" aria-label="Marcar como realizado" title="Marcar como realizado">✓</button>` : ""}
         ${p.telefono ? `<a class="mini wa" href="${linkWhatsApp(p.telefono)}" target="_blank" rel="noopener" aria-label="WhatsApp">${I.wa}</a>
         <a class="mini tel" href="${linkLlamar(p.telefono)}" aria-label="Llamar">${I.phone}</a>` : ""}
       </span>
@@ -1082,18 +1089,20 @@ function menuUsuario() {
     <p class="suave">${esc(S.yo?.email || "")}</p>
     <div class="lista-botones">
       ${S.yo?.es_admin ? '<button class="btn primario ancho" id="irAjustes">⚙️ Ajustes y usuarios</button>' : ""}
-      ${S.yo?.es_admin || api.modo !== "supabase" ? '<button class="btn ancho" id="irFact">💶 Facturación mensual</button>' : ""}
+      ${esAdmin() ? '<button class="btn ancho" id="irFact">💶 Facturación mensual</button>' : ""}
       ${api.modo === "supabase" ? '<button class="btn ancho" id="cambiarPw">Cambiar contraseña</button>' : ""}
       ${yaInstalada() ? "" : '<button class="btn ancho" id="instalarMenu">Instalar como app</button>'}
-      <button class="btn ancho" id="irPapelera">🗑 Papelera (partes borrados)</button>
-      <button class="btn ancho" id="exportar">Exportar partes (CSV)</button>
+      ${esLector() ? "" : `<button class="btn ancho" id="irPapelera">🗑 Papelera (partes borrados)</button>
+      <button class="btn ancho" id="exportar">Exportar partes (CSV)</button>`}
+      ${api.modo !== "supabase" ? `<button class="btn ancho" id="demoLector">${esLector() ? "Demo: volver a usuario normal" : "Demo: simular usuario de solo lectura"}</button>` : ""}
       ${api.modo === "supabase" ? '<button class="btn ancho peligro" id="salir">Cerrar sesión</button>' : ""}
       <button class="btn texto ancho" data-cerrar>Cerrar</button>
     </div>
     ${pieCopyright()}`);
   $("#salir", s)?.addEventListener("click", async () => { await api.salir(); S.yo = null; cerrarSheet(); router(); });
-  $("#exportar", s).addEventListener("click", exportarCSV);
-  $("#irPapelera", s).addEventListener("click", () => { cerrarSheet(); location.hash = "/papelera"; });
+  $("#exportar", s)?.addEventListener("click", exportarCSV);
+  $("#irPapelera", s)?.addEventListener("click", () => { cerrarSheet(); location.hash = "/papelera"; });
+  $("#demoLector", s)?.addEventListener("click", () => { sessionSet("demoLector", esLector() ? "0" : "1"); cerrarSheet(); location.hash = "/"; router(); });
   $("#irAjustes", s)?.addEventListener("click", () => { cerrarSheet(); location.hash = "/ajustes"; });
   $("#irFact", s)?.addEventListener("click", () => { cerrarSheet(); location.hash = "/facturacion"; });
   $("#instalarMenu", s)?.addEventListener("click", instalarApp);
@@ -1183,6 +1192,7 @@ function avisosLectura(d = {}) {
 
 async function procesarArchivo(file) {
   if (!file) return;
+  if (esLector()) return toast("Tu usuario es de solo lectura: no puede crear partes", "error");
   const esPDF = file.type === "application/pdf" || /\.pdf$/i.test(file.name);
   let blob = file, lectura = file, mime = esPDF ? "application/pdf" : "image/jpeg";
   try {
@@ -1256,17 +1266,18 @@ async function vistaCompartido() {
     <h2>Archivos recibidos</h2>
     <p>Has compartido <b>${files.length}</b> ${files.length === 1 ? "archivo" : "archivos"}${imgs.length && imgs.length !== files.length ? ` (${imgs.length} fotos)` : ""}. ¿Qué quieres hacer?</p>
     <div class="lista-botones">
-      <button class="btn grande" id="cNuevo">${I.file}<span><b>Nuevo parte</b><small>Leer ${files.length > 1 ? "el primero" : "el documento"} con IA${files.length > 1 && imgs.length > 1 ? " (las demás fotos se añaden al guardar)" : ""}</small></span></button>
-      ${files.length > 1 ? `<button class="btn grande" id="cLote">${I.file}<span><b>Varios partes (uno por archivo)</b><small>Lee los ${files.length} con IA y los revisas antes de guardar</small></span></button>` : ""}
+      ${esLector() ? "" : `<button class="btn grande" id="cNuevo">${I.file}<span><b>Nuevo parte</b><small>Leer ${files.length > 1 ? "el primero" : "el documento"} con IA${files.length > 1 && imgs.length > 1 ? " (las demás fotos se añaden al guardar)" : ""}</small></span></button>
+      ${files.length > 1 ? `<button class="btn grande" id="cLote">${I.file}<span><b>Varios partes (uno por archivo)</b><small>Lee los ${files.length} con IA y los revisas antes de guardar</small></span></button>` : ""}`}
       ${imgs.length ? `<button class="btn grande" id="cFotos">${I.cam}<span><b>Añadir ${imgs.length === 1 ? "la foto" : "las " + imgs.length + " fotos"} a un parte</b><small>Fotos del daño o del trabajo terminado</small></span></button>` : ""}
+      ${esLector() && !imgs.length ? '<p class="suave">Tu usuario solo puede añadir fotos a un parte: comparte fotos, no documentos.</p>' : ""}
     </div>`);
-  $("#cNuevo", s).onclick = () => {
+  $("#cNuevo", s)?.addEventListener("click", () => {
     cerrarSheet();
     const [primero, ...resto] = files;
     S.fotosPendientes = resto.filter((f) => imgs.includes(f));
     S.compartidos = null;
     procesarArchivo(primero);
-  };
+  });
   $("#cFotos", s)?.addEventListener("click", () => elegirParteParaFotos(imgs));
   $("#cLote", s)?.addEventListener("click", () => { cerrarSheet(); S.compartidos = null; iniciarLote(files); });
 }
@@ -1523,6 +1534,7 @@ async function avisoLotePendiente() {
 }
 
 function iniciarLote(files) {
+  if (esLector()) return toast("Tu usuario es de solo lectura: no puede crear partes", "error");
   if (files.length > MAX_LOTE) { toast(`Máximo ${MAX_LOTE} archivos por tanda. Se cogen los ${MAX_LOTE} primeros.`, "error"); files = files.slice(0, MAX_LOTE); }
   if (lotePendiente(S.lote) && !confirm("Tienes otra subida en masa con partes leídos sin guardar. ¿Descartarla y empezar esta?")) return;
   S.lote = files.map((f, i) => ({ i, file: f, nombre: f.name, estado: "pendiente", sel: true }));
@@ -1932,7 +1944,7 @@ async function vistaParte(id) {
   <header class="barra" style="--ase:${colorAseg(p.aseguradora)}">
     <button class="icono" id="volver" aria-label="Volver">${I.back}</button>
     <h1><span class="aseg">${esc(p.aseguradora)}</span> ${esc(p.expediente || "")}</h1>
-    <button class="icono" id="menuParte" aria-label="Más opciones">${I.more}</button>
+    ${esLector() ? "<span></span>" : `<button class="icono" id="menuParte" aria-label="Más opciones">${I.more}</button>`}
   </header>
 
   ${avisoCobertura(p)}
@@ -1957,15 +1969,15 @@ async function vistaParte(id) {
   <section class="tarjeta">
     <div class="pasos">
       ${ESTADOS.map((s, i) => `
-        <button class="paso ${i < idx ? "hecho" : ""} ${i === idx ? "actual" : ""}" data-estado="${s.id}" style="--c:${s.color}">
+        <button class="paso ${i < idx ? "hecho" : ""} ${i === idx ? "actual" : ""}" data-estado="${s.id}" style="--c:${s.color}" ${esLector() ? "disabled" : ""}>
           <i>${i < idx ? "✓" : i + 1}</i><span>${s.nombre}</span>
         </button>`).join("")}
     </div>
     <div class="estado-actual" style="--c:${e.color}">${chipDias(p, true)} · Estado: <b>${e.nombre}</b>${p.fecha_cita && idx < 2 ? ` · Cita ${fFechaHora(p.fecha_cita)}` : ""}</div>
-    ${p.estado === "realizado" && p.realizado_at ? `<div class="fecha-realizado">Hecho el <b>${fFecha(p.realizado_at)}</b> <button type="button" class="btn peq" id="cambiarFechaR">📅 Cambiar fecha</button></div>` : ""}
+    ${p.estado === "realizado" && p.realizado_at ? `<div class="fecha-realizado">Hecho el <b>${fFecha(p.realizado_at)}</b>${esLector() ? "" : ` <button type="button" class="btn peq" id="cambiarFechaR">📅 Cambiar fecha</button>`}</div>` : ""}
     <div class="lista-botones">
-      ${sig ? `<button class="btn primario ancho" id="avanzar" style="--c:${sig.color}">Marcar como ${sig.nombre.toLowerCase()} →</button>` : ""}
-      ${idx >= idxEstado("visitado") ? `<button class="btn primario ancho" id="informe" style="--c:#16a34a">${I.wa} ${esConexion(p) ? `Enviar ${p.estado === "realizado" ? "trabajo terminado" : "presupuesto"} al cliente` : `Enviar ${p.estado === "realizado" ? "trabajo terminado" : "visita"} a ${esc(DEST.nombre)}`}</button>` : ""}
+      ${sig && !esLector() ? `<button class="btn primario ancho" id="avanzar" style="--c:${sig.color}">Marcar como ${sig.nombre.toLowerCase()} →</button>` : ""}
+      ${idx >= idxEstado("visitado") && !esLector() ? `<button class="btn primario ancho" id="informe" style="--c:#16a34a">${I.wa} ${esConexion(p) ? `Enviar ${p.estado === "realizado" ? "trabajo terminado" : "presupuesto"} al cliente` : `Enviar ${p.estado === "realizado" ? "trabajo terminado" : "visita"} a ${esc(DEST.nombre)}`}</button>` : ""}
       <button class="btn ancho" id="nota">Añadir nota</button>
     </div>
   </section>
@@ -1986,10 +1998,10 @@ async function vistaParte(id) {
     ${dato("Fecha encargo", fFecha(p.fecha_encargo))}
     ${p.fecha_cita ? `<div class="dato"><span>Cita</span><b>${fFechaHora(p.fecha_cita)} · <a href="${linkCalendario(p)}" target="_blank" rel="noopener">📅 Añadir al calendario</a></b></div>` : ""}
     ${verPrecios() ? dato("Valorado (sin IVA)", fEuros(p.importe_valorado)) + dato("Autorizado", fEuros(p.importe_autorizado)) : ""}
-    <div class="dato"><span>Asignado</span><b>
+    <div class="dato"><span>Asignado</span><b>${esLector() ? esc(asignado || "—") : `
       <select id="asignar"><option value="">— Sin asignar —</option>
         ${S.miembros.map((m) => `<option value="${m.user_id}" ${m.user_id === p.asignado_a ? "selected" : ""}>${esc(m.nombre)}</option>`).join("")}
-      </select></b></div>
+      </select>`}</b></div>
     ${p.tramitador_nombre || p.tramitador_telefono || p.tramitador_email ? `
       <div class="dato"><span>Tramitador</span><b>${esc(p.tramitador_nombre || "")}
         ${p.tramitador_telefono ? `<br><a href="${linkLlamar(p.tramitador_telefono)}">${esc(p.tramitador_telefono)}</a> · <a href="${linkWhatsApp(p.tramitador_telefono)}" target="_blank" rel="noopener">WhatsApp</a>` : ""}
@@ -2020,12 +2032,12 @@ async function vistaParte(id) {
       }).join("")}
     </ol>
   </section>
-  <div class="zona-borrar"><button class="btn ancho peligro" id="aPapelera">🗑 Borrar este parte</button>
-    <p class="suave">Va a la papelera (icono de la persona → Papelera) y se puede recuperar.</p></div>
+  ${esLector() ? "" : `<div class="zona-borrar"><button class="btn ancho peligro" id="aPapelera">🗑 Borrar este parte</button>
+    <p class="suave">Va a la papelera (icono de la persona → Papelera) y se puede recuperar.</p></div>`}
   <div style="height:40px"></div>`;
 
   $("#volver").onclick = () => (location.hash = "/");
-  $("#menuParte").onclick = () => menuParte(p);
+  $("#menuParte")?.addEventListener("click", () => menuParte(p));
   if (S.abrirInforme === p.id) { S.abrirInforme = null; setTimeout(() => flujoInforme(p), 300); }
   $("#aContacto").onclick = () => guardarContacto(p);
   // Autorizar = confirmar la valoración código a código (si hay códigos valorados)
@@ -2037,12 +2049,12 @@ async function vistaParte(id) {
   $("#informe")?.addEventListener("click", () => flujoInforme(p));
   $("#nota").onclick = () => sheetFase(p, null);
   $("#cambiarFechaR")?.addEventListener("click", () => sheetFechaRealizado(p, () => vistaParte(p.id)));
-  $$(".paso").forEach((b) => b.addEventListener("click", () => {
+  if (!esLector()) $$(".paso").forEach((b) => b.addEventListener("click", () => {
     const dest = b.dataset.estado;
     if (dest === p.estado) return;
     irAFase(dest);
   }));
-  $("#asignar").addEventListener("change", async (ev) => {
+  $("#asignar")?.addEventListener("change", async (ev) => {
     await conCarga("Guardando…", () => api.actualizarParte(p.id, { asignado_a: ev.target.value || null }));
     toast("Asignado", "ok");
   });
@@ -2054,7 +2066,7 @@ async function vistaParte(id) {
   $("#addFoto").onclick = () => sheetFotos(p);
   $("#addBoceto").onclick = () => nuevoBoceto(p);
   $$(".editar-ev").forEach((b) => b.addEventListener("click", () => sheetEvento(p, p.eventos.find((e) => String(e.id) === b.dataset.id))));
-  $("#aPapelera").onclick = () => enviarPapelera(p);
+  $("#aPapelera")?.addEventListener("click", () => enviarPapelera(p));
   pintarFotos(p);
 }
 
@@ -2070,8 +2082,8 @@ function seccionLineas(p, tipo) {
   const vacio = tipo === "realizados" ? "Sin trabajos anotados. Al editarlos se copian los autorizados (o los de la valoración) para que solo cambies lo que haya variado." : "Sin códigos. Busca por código o por descripción.";
   return `<section class="tarjeta">
     <div class="h3-fila"><h3>${titulo}</h3>
-      <span>${tipo === "valoracion" && lineas.length && !esConexion(p) && idxEstado(p.estado) >= idxEstado("valorado") ? `<a class="btn peq primario" href="#/lineas/${p.id}/autorizados">Autorizar</a> ` : ""}<a class="btn peq" href="#/lineas/${p.id}/${tipo}">${lineas.length ? "Editar" : "+ Códigos"}</a></span></div>
-    ${tipo === "autorizados" ? `<p class="suave" style="font-size:.85em;margin:.2em 0 .6em">Esto es lo que se factura<span class="precio">. Valorado: ${fEuros(totalesLineas(p.lineas_valoracion || []).base)}</span> · <a href="#/lineas/${p.id}/valoracion">ver valoración original</a></p>` : ""}
+      ${esLector() ? "" : `<span>${tipo === "valoracion" && lineas.length && !esConexion(p) && idxEstado(p.estado) >= idxEstado("valorado") ? `<a class="btn peq primario" href="#/lineas/${p.id}/autorizados">Autorizar</a> ` : ""}<a class="btn peq" href="#/lineas/${p.id}/${tipo}">${lineas.length ? "Editar" : "+ Códigos"}</a></span>`}</div>
+    ${tipo === "autorizados" ? `<p class="suave" style="font-size:.85em;margin:.2em 0 .6em">Esto es lo que se factura<span class="precio">. Valorado: ${fEuros(totalesLineas(p.lineas_valoracion || []).base)}</span>${esLector() ? "" : ` · <a href="#/lineas/${p.id}/valoracion">ver valoración original</a>`}</p>` : ""}
     ${lineas.length ? `<div class="lineas-mini">${lineas.map((l) => `
       <div><span><b>${esc(l.codigo || "—")}</b> ${esc(l.descripcion)}</span><span>${Number(l.cantidad)}×<span class="precio"> · ${fEuros(importeLinea(l))}${Number(l.dto) ? ` <small>(-${Number(l.dto)}%)</small>` : ""}</span></span></div>`).join("")}</div>
       <div class="totales precio">${htmlTotales(t, ivaDe(p))}</div>`
@@ -2202,7 +2214,7 @@ function sheetFotos(p) {
   const s = abrirSheet(`
     <h2>Añadir fotos</h2>
     <div class="seg" id="tipoFoto">
-      ${[["antes", "Antes"], ["despues", "Después"], ["firmado", "Parte firmado"], ["otra", "Otra"]].map(([v, n]) => `<button type="button" data-v="${v}" class="${v === tipoDef ? "on" : ""}">${n}</button>`).join("")}
+      ${[["antes", "Antes"], ["despues", "Después"], ["firmado", "Parte firmado"], ["otra", "Otra"]].filter(([v]) => v !== "firmado" || !esLector()).map(([v, n]) => `<button type="button" data-v="${v}" class="${v === tipoDef ? "on" : ""}">${n}</button>`).join("")}
     </div>
     <div class="lista-botones">
       <label class="btn grande">${I.cam}<span><b>Hacer foto</b></span><input type="file" accept="image/*" capture="environment" hidden id="fCam"></label>
@@ -2977,12 +2989,12 @@ async function pintarUsuarios() {
   try {
     lista = (await api.adminUsuarios("listar")).usuarios;
     const ms = await api.miembros().catch(() => []);
-    lista = lista.map((u) => ({ ...u, ver_precios: ms.find((m) => m.user_id === u.id)?.ver_precios ?? u.ver_precios }));
+    lista = lista.map((u) => { const m = ms.find((x) => x.user_id === u.id); return { ...u, ver_precios: m?.ver_precios ?? u.ver_precios, solo_lectura: !!m?.solo_lectura, miembro: !!m }; });
   }
   catch (e) { cont.innerHTML = `<p class="suave">No se pudieron cargar: ${esc(e.message)}</p>`; return; }
   cont.innerHTML = lista.map((u) => `
     <div class="usuario" data-id="${u.id}">
-      <div><b>${esc(u.nombre || "(sin alta en el equipo)")}</b>${u.es_admin ? ' <span class="etq">admin</span>' : ""}${!u.es_admin && u.ver_precios === false ? ' <span class="etq">sin precios</span>' : ""}<br>
+      <div><b>${esc(u.nombre || "(sin alta en el equipo)")}</b>${u.es_admin ? ' <span class="etq">admin</span>' : ""}${!u.es_admin && u.solo_lectura ? ' <span class="etq">solo lectura</span>' : !u.es_admin && u.ver_precios === false ? ' <span class="etq">sin precios</span>' : ""}<br>
         <small class="suave">${esc(u.email)}${u.ultimo_acceso ? " · último acceso " + fFecha(u.ultimo_acceso) : ""}</small></div>
       <button class="icono oscuro" data-acc="menu" aria-label="Opciones">${I.more}</button>
     </div>`).join("");
@@ -3021,7 +3033,8 @@ function menuUsuarioAdmin(u) {
     <div class="lista-botones">
       <button class="btn ancho" id="uNombre">Cambiar nombre</button>
       <button class="btn ancho" id="uPw">Poner contraseña nueva</button>
-      ${soyYo || u.es_admin ? "" : `<button class="btn ancho" id="uPrecios">${u.ver_precios === false ? "💶 Dejarle ver los precios" : "🙈 Ocultarle los precios"}</button>`}
+      ${soyYo || u.es_admin || u.solo_lectura ? "" : `<button class="btn ancho" id="uPrecios">${u.ver_precios === false ? "💶 Dejarle ver los precios" : "🙈 Ocultarle los precios"}</button>`}
+      ${soyYo || u.es_admin || !u.miembro ? "" : `<button class="btn ancho" id="uLectura">${u.solo_lectura ? "✏️ Quitar solo lectura" : "👁 Solo lectura (ve los partes sin precios; solo añade notas y fotos)"}</button>`}
       ${soyYo ? "" : `<button class="btn ancho" id="uAdmin">${u.es_admin ? "Quitar administrador" : "Hacer administrador"}</button>`}
       ${soyYo ? "" : '<button class="btn ancho peligro" id="uBorrar">Borrar usuario</button>'}
       <button class="btn texto ancho" data-cerrar>Cerrar</button>
@@ -3041,6 +3054,10 @@ function menuUsuarioAdmin(u) {
   $("#uPrecios", s)?.addEventListener("click", async () => {
     await conCarga("Guardando…", () => api.editarMiembro(u.id, { ver_precios: u.ver_precios === false }));
     fin(u.ver_precios === false ? "Ahora ve los precios" : "Precios ocultos para este usuario");
+  });
+  $("#uLectura", s)?.addEventListener("click", async () => {
+    await conCarga("Guardando…", () => api.editarMiembro(u.id, { solo_lectura: !u.solo_lectura }));
+    fin(u.solo_lectura ? "Ya no es de solo lectura" : "Ahora es de solo lectura");
   });
   $("#uAdmin", s)?.addEventListener("click", async () => {
     await conCarga("Guardando…", () => api.adminUsuarios("editar", { id: u.id, es_admin: !u.es_admin }));
