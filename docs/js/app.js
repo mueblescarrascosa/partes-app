@@ -2265,6 +2265,7 @@ async function vistaParte(id) {
       ${sig && !esLector() ? `<button class="btn primario ancho" id="avanzar" style="--c:${sig.color}">Marcar como ${sig.nombre.toLowerCase()} →</button>` : ""}
       ${idx >= idxEstado("visitado") && !esLector() ? `<button class="btn primario ancho" id="informe" style="--c:#16a34a">${I.wa} ${esConexion(p) ? `Enviar ${p.estado === "realizado" ? "trabajo terminado" : "presupuesto"} al cliente` : `Enviar ${p.estado === "realizado" ? "trabajo terminado" : "visita"} a ${esc(DEST.nombre)}`}</button>` : ""}
       <button class="btn ancho" id="nota">Añadir nota</button>
+      ${esLector() ? "" : '<button class="btn ancho" id="alTaller">📤 Enviar al taller</button>'}
     </div>
   </section>
 
@@ -2334,6 +2335,7 @@ async function vistaParte(id) {
   $("#avanzar")?.addEventListener("click", () => irAFase(sig.id));
   $("#informe")?.addEventListener("click", () => flujoInforme(p));
   $("#nota").onclick = () => sheetFase(p, null);
+  $("#alTaller")?.addEventListener("click", () => sheetTaller(p));
   $("#cambiarFechaR")?.addEventListener("click", () => sheetFechaRealizado(p, () => vistaParte(p.id)));
   if (!esLector()) $$(".paso").forEach((b) => b.addEventListener("click", () => {
     const dest = b.dataset.estado;
@@ -2506,6 +2508,78 @@ function sheetPreviaFotos(titulo, files, alGuardar) {
     </div>`);
   const pv = previaFotos($("#pvLista", s), files);
   $("#pvGuardar", s).onclick = () => { cerrarSheet(); alGuardar(pv.giros); pv.liberar(); };
+}
+
+// ---- Enviar al taller: bocetos, fotos, trabajos, notas y medidas al grupo de WhatsApp del taller.
+// WhatsApp no deja abrir un grupo con un enlace: las imágenes van por el menú de compartir (el texto se copia
+// para pegarlo, porque si va junto WhatsApp lo repite en cada imagen) y el texto solo, con un enlace sin número
+// que deja elegir el chat o el grupo. Nunca lleva importes.
+function sheetTaller(p) {
+  const bocetos = bocetosDe(p), fotos = fotosDe(p);
+  const lineas = [p.lineas_realizadas, p.lineas_autorizadas, p.lineas_valoracion].find((l) => (l || []).length) || [];
+  const notas = (p.eventos || []).filter((e) => e.nota && !/^(Marcado automáticamente|Parte recibido de nuevo|Ha llegado otro parte|Preparado mensaje|Cambiado .* factura|Quitado de la factura)/.test(e.nota));
+  const etiqueta = { antes: "Antes", despues: "Después", firmado: "Parte firmado", otra: "Foto" };
+  const check = (name, value, texto, marcado) => `<label class="check"><input type="checkbox" name="${name}" value="${esc(value)}" ${marcado ? "checked" : ""}> ${texto}</label>`;
+  const s = abrirSheet(`
+    <h2>📤 Enviar al taller</h2>
+    <p class="suave">Elige qué mandar. Después eliges WhatsApp y el grupo del taller.</p>
+    <form id="fTaller" class="form">
+      ${check("mapa", "1", "Dirección con enlace al mapa", true)}
+      ${p.telefono ? check("tel", "1", "Teléfono del cliente", false) : ""}
+      ${lineas.length ? check("trabajos", "1", `Trabajos del parte (${lineas.length} código${lineas.length === 1 ? "" : "s"}, sin precios)`, true) : ""}
+      ${bocetos.length ? `<b>Bocetos</b>${bocetos.map((f, i) => check("img", f.id, `Boceto ${i + 1} · ${fFecha(f.created_at)}`, true)).join("")}` : ""}
+      ${fotos.length ? `<b>Fotos</b>${fotos.map((f, i) => check("img", f.id, `${etiqueta[f.tipo] || "Foto"} ${i + 1} · ${fFecha(f.created_at)}`, false)).join("")}` : ""}
+      ${notas.length ? `<b>Notas del historial</b>${notas.map((e) => check("nota", e.id, esc(e.nota.length > 90 ? e.nota.slice(0, 90) + "…" : e.nota), false)).join("")}` : ""}
+      <label>Medidas, acabados, colores…<textarea name="extra" rows="4" placeholder="Ej.: hueco 82 × 203 cm, roble natural, tirador negro"></textarea></label>
+      <div class="pie-form"><button type="button" class="btn" data-cerrar>Cancelar</button><button type="submit" class="btn primario">Preparar</button></div>
+    </form>`);
+  $("#fTaller", s).addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    const f = new FormData(ev.target);
+    const dir = [p.direccion, [p.codigo_postal, p.poblacion].filter(Boolean).join(" ")].filter(Boolean).join(", ");
+    const L = [`*🛠 Parte ${[p.aseguradora, p.expediente].filter(Boolean).join(" ")}*${p.num_encargo ? ` (enc. ${p.num_encargo})` : ""}`, `👤 ${p.nombre || "Sin nombre"}`];
+    if (dir) L.push(`📍 ${dir}`);
+    if (f.get("mapa") && dir) L.push(linkMapa(p));
+    if (f.get("tel") && p.telefono) L.push(`📞 ${p.telefono}`);
+    if (f.get("trabajos") && lineas.length) L.push("", "*Trabajos:*", ...lineas.map((l) => `- ${[l.codigo, l.descripcion].filter(Boolean).join(" ")}${Number(l.cantidad) && Number(l.cantidad) !== 1 ? ` × ${Number(l.cantidad)}` : ""}`));
+    const notasElegidas = notas.filter((e) => f.getAll("nota").includes(String(e.id)));
+    if (notasElegidas.length) L.push("", "*Notas:*", ...notasElegidas.map((e) => `- ${e.nota.trim()}`));
+    const extra = (f.get("extra") || "").trim();
+    if (extra) L.push("", "*Medidas / acabados:*", extra);
+    const elegidas = [...bocetos, ...fotos].filter((x) => f.getAll("img").includes(String(x.id)));
+    let files = [];
+    try {
+      files = await conCarga("Preparando imágenes…", () => Promise.all(elegidas.map(async (x, i) => {
+        const b = await api.descargarArchivo(x.path);
+        const ext = (b.type || "").includes("png") ? "png" : "jpg";
+        return new File([b], `${x.tipo === "boceto" ? "boceto" : "foto"}_${i + 1}.${ext}`, { type: b.type || "image/jpeg" });
+      })));
+    } catch { return; }
+    enviarAlTaller(L.join("\n"), files);
+  });
+}
+function enviarAlTaller(texto, files) {
+  const puedeFotos = files.length && navigator.canShare?.({ files });
+  const s = abrirSheet(`
+    <h2>📤 Enviar al taller</h2>
+    <label>Mensaje<textarea id="txtTaller" rows="9">${esc(texto)}</textarea></label>
+    <div class="lista-botones">
+      ${files.length ? `<button class="btn primario grande" id="tFotos" style="--c:#16a34a">${I.wa}<span><b>${puedeFotos ? `Enviar ${files.length === 1 ? "la imagen" : `las ${files.length} imágenes`}` : `Descargar ${files.length === 1 ? "la imagen" : `las ${files.length} imágenes`}`}</b><small>${puedeFotos ? "Elige WhatsApp y el grupo; el texto queda copiado para pegarlo" : "Y copia el texto para pegarlo con ellas"}</small></span></button>` : ""}
+      <button class="btn grande" id="tTexto">${I.wa}<span><b>${files.length ? "Solo el texto" : "Enviar por WhatsApp"}</b><small>Abre WhatsApp para elegir el chat o el grupo</small></span></button>
+      <button class="btn grande" id="tCopiar">📋<span><b>Copiar texto</b></span></button>
+      <button class="btn texto ancho" data-cerrar>Cerrar</button>
+    </div>`);
+  const txt = () => $("#txtTaller", s).value;
+  const copiar = async () => { try { await navigator.clipboard.writeText(txt()); return true; } catch { return false; } };
+  $("#tFotos", s)?.addEventListener("click", async () => {
+    const copiado = await copiar();
+    if (!puedeFotos) { files.forEach((x) => descargar(x, x.name)); toast(copiado ? "Imágenes descargadas y texto copiado" : "Imágenes descargadas", "ok"); return; }
+    toast(copiado ? "Texto copiado: en WhatsApp mantén pulsado «Añade un comentario» y pega" : "No se pudo copiar el texto: usa luego «Solo el texto»", copiado ? "ok" : "error");
+    try { await navigator.share({ files }); } catch (e) { if (e.name !== "AbortError") toast("No se pudo compartir: " + e.message, "error"); }
+  });
+  // Enlace sin número: WhatsApp deja elegir el chat o el grupo (y el móvil, con qué WhatsApp abrirlo si hay dos)
+  $("#tTexto", s).addEventListener("click", () => { location.href = "https://wa.me/?text=" + encodeURIComponent(txt()); });
+  $("#tCopiar", s).addEventListener("click", async () => { const ok = await copiar(); toast(ok ? "Texto copiado" : "No se pudo copiar", ok ? "ok" : "error"); });
 }
 
 // Enderezar una foto ya guardada (su autor o un admin, como al borrarla). Se guarda girada como foto nueva, con el mismo
