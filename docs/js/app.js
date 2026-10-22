@@ -48,6 +48,9 @@ const S = {
 
 // Usuarios sin permiso de precios: la app no les muestra importes (solo se oculta en pantalla).
 const verPrecios = () => api.modo !== "supabase" ? sessionGet("demoSinPrecios") !== "1" : (S.yo?.es_admin || S.yo?.ver_precios !== false);
+// Mismos permisos que las reglas de Supabase: el historial solo lo edita un admin; fotos y bocetos, su autor o un admin
+const esAdmin = () => api.modo !== "supabase" || !!S.yo?.es_admin;
+const puedeBorrarFoto = (f) => esAdmin() || f.creado_por === S.yo?.user_id;
 function sessionGet(k) { try { return localStorage.getItem("pa_" + k); } catch { return null; } }
 function sessionSet(k, v) { try { localStorage.setItem("pa_" + k, v); } catch { /* nada */ } }
 
@@ -986,7 +989,9 @@ async function vistaFacturacion() {
     };
     const marcarFacturados = async (aMarcar, ref) => {
       const fecha = new Date().toLocaleDateString("sv-SE");
-      await conCarga("Guardando…", async () => { for (const p of aMarcar) { await api.actualizarParte(p.id, { factura_ref: ref, facturado_at: fecha, cobrado_at: null }); Object.assign(p, { factura_ref: ref, facturado_at: fecha, cobrado_at: null }); } });
+      // Una sola actualización para todos: o quedan todos facturados o ninguno
+      const cambios = { factura_ref: ref, facturado_at: fecha, cobrado_at: null };
+      await conCarga("Guardando…", async () => { await api.actualizarVarios(aMarcar.map((p) => p.id), cambios); aMarcar.forEach((p) => Object.assign(p, cambios)); });
       toast(`Factura ${ref} anotada. Cobro previsto: ${fFecha(sumarDias(fecha, DIAS_COBRO()))}`, "ok"); sel.clear(); pinta();
     };
     $("#fEnviar")?.addEventListener("click", async () => {
@@ -1021,7 +1026,7 @@ async function vistaFacturacion() {
     const cambiarCobro = async (clave, valor) => {
       const [ref, fecha] = clave.split("|");
       const ps = (S.partes || []).filter((p) => p.factura_ref === ref && (p.facturado_at || "") === fecha);
-      try { await conCarga("Guardando…", async () => { for (const p of ps) { await api.actualizarParte(p.id, { cobrado_at: valor }); p.cobrado_at = valor; } }); pinta(); } catch { /* conCarga avisa */ }
+      try { await conCarga("Guardando…", async () => { await api.actualizarVarios(ps.map((p) => p.id), { cobrado_at: valor }); ps.forEach((p) => (p.cobrado_at = valor)); }); pinta(); } catch { /* conCarga avisa */ }
     };
     $$("[data-cobrar]").forEach((b) => b.onclick = () => { if (confirm(`¿Marcar la factura ${b.dataset.cobrar.split("|")[0]} como cobrada hoy?`)) cambiarCobro(b.dataset.cobrar, new Date().toLocaleDateString("sv-SE")); });
     $$("[data-descobrar]").forEach((b) => b.onclick = () => cambiarCobro(b.dataset.descobrar, null));
@@ -2010,7 +2015,7 @@ async function vistaParte(id) {
         return `<li style="--c:${s ? s.color : "#94a3b8"}">
           <div class="h-cab"><b>${s ? s.nombre : "Nota"}</b><span>${fFechaHora(ev.created_at)}${nombreDe(ev.creado_por) ? " · " + esc(nombreDe(ev.creado_por)) : ""}</span></div>
           ${ev.nota ? `<p class="pre">${esc(ev.nota)}</p>` : ""}
-          <button class="editar-ev" data-id="${ev.id}" aria-label="Editar">${I.edit}</button>
+          ${esAdmin() ? `<button class="editar-ev" data-id="${ev.id}" aria-label="Editar">${I.edit}</button>` : ""}
         </li>`;
       }).join("")}
     </ol>
@@ -2112,12 +2117,14 @@ function pintarBocetos(p) {
     const fig = cont.querySelector(`figure[data-id="${f.id}"]`);
     api.urlArchivo(f.path).then((u) => { fig.querySelector("img").src = u; }).catch(() => {});
     fig.addEventListener("click", () => {
+      // Un boceto ajeno no se puede borrar: al dibujar encima se guarda como boceto nuevo y el original se queda
+      const propio = puedeBorrarFoto(f);
       const s = abrirSheet(`
         <h2>Boceto</h2>
         <div class="lista-botones">
           <button class="btn ancho" id="bVer">👁 Verlo en grande</button>
-          <button class="btn ancho" id="bEditar">✏️ Seguir dibujando encima</button>
-          <button class="btn ancho peligro" id="bBorrar">🗑 Borrar boceto</button>
+          <button class="btn ancho" id="bEditar">✏️ ${propio ? "Seguir dibujando encima" : "Dibujar encima (se guarda como boceto nuevo)"}</button>
+          ${propio ? '<button class="btn ancho peligro" id="bBorrar">🗑 Borrar boceto</button>' : ""}
           <button class="btn texto ancho" data-cerrar>Cerrar</button>
         </div>`);
       $("#bVer", s).onclick = async () => { cerrarSheet(); window.open(await api.urlArchivo(f.path), "_blank"); };
@@ -2125,14 +2132,14 @@ function pintarBocetos(p) {
         cerrarSheet();
         let fondo;
         try { fondo = await conCarga("Abriendo…", () => api.descargarArchivo(f.path)); } catch { return; }
-        nuevoBoceto(p, fondo, f);
+        nuevoBoceto(p, fondo, propio ? f : null);
       };
-      $("#bBorrar", s).onclick = async () => {
+      $("#bBorrar", s)?.addEventListener("click", async () => {
         if (!confirm("¿Borrar este boceto?")) return;
         cerrarSheet();
         await conCarga("Borrando…", () => api.borrarFoto(f));
         vistaParte(p.id);
-      };
+      });
     });
   }
 }
@@ -2145,7 +2152,7 @@ async function pintarFotos(p) {
   const etiquetas = { antes: "Antes", despues: "Después", firmado: "📄 Parte firmado", otra: "" };
   cont.innerHTML = fotos.map((f) => `
     <figure data-id="${f.id}"><img alt="" loading="lazy"><figcaption>${etiquetas[f.tipo] || ""}</figcaption>
-      <button class="borrar-foto" aria-label="Borrar foto">${I.x}</button></figure>`).join("");
+      ${puedeBorrarFoto(f) ? `<button class="borrar-foto" aria-label="Borrar foto">${I.x}</button>` : ""}</figure>`).join("");
   for (const f of fotos) {
     const fig = cont.querySelector(`figure[data-id="${f.id}"]`);
     api.urlArchivo(f.path).then((u) => { fig.querySelector("img").src = u; }).catch(() => {});
@@ -2167,7 +2174,7 @@ async function pintarFotos(p) {
         nuevoBoceto(p, fondo, null, true);
       };
     });
-    fig.querySelector(".borrar-foto").addEventListener("click", async () => {
+    fig.querySelector(".borrar-foto")?.addEventListener("click", async () => {
       if (!confirm("¿Borrar esta foto?")) return;
       await conCarga("Borrando…", () => api.borrarFoto(f));
       vistaParte(p.id);
@@ -2771,8 +2778,9 @@ async function vistaLineas(id, tipo) {
     }
     await conCarga("Guardando…", async () => {
       await api.actualizarParte(id, cambios);
-      if (autorizaAhora) await anotarFase(p, "autorizado", `Valoración confirmada: ${limpias.length} código(s), ${fEuros(cambios.importe_autorizado)} sin IVA.`);
-      if (valoraAhora) await anotarFase(p, "valorado", `Valoración: ${limpias.length} código(s), ${fEuros(cambios.importe_valorado)} sin IVA.`);
+      // Sin importes en el historial: lo leen también usuarios que no ven precios
+      if (autorizaAhora) await anotarFase(p, "autorizado", `Valoración confirmada: ${limpias.length} código(s).`);
+      if (valoraAhora) await anotarFase(p, "valorado", `Valoración: ${limpias.length} código(s).`);
     });
     sucio = false; toast(valoraAhora ? "Valoración guardada: parte valorado" : "Guardado", "ok");
     if (valoraAhora) S.abrirInforme = id;

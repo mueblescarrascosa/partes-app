@@ -89,16 +89,32 @@ function crearApiSupabase() {
     },
     async crearParte(p) { return ok(await sb.from("partes").insert(p).select().single()); },
     async actualizarParte(id, cambios) { return ok(await sb.from("partes").update(cambios).eq("id", id).select().single()); },
+    // Los mismos cambios en varios partes con una sola actualización: o se aplica a todos o a ninguno
+    async actualizarVarios(ids, cambios) {
+      if (!ids.length) return;
+      const r = ok(await sb.from("partes").update(cambios).in("id", ids).select("id"));
+      if (r.length !== ids.length) throw new Error(`Solo se han actualizado ${r.length} de ${ids.length} partes. Recarga y revísalo.`);
+    },
     async borrarParte(id) {
-      // Primero se apuntan todos los archivos (en bloques) y después se borran: borrar mientras se lista descuadraría los bloques
+      // Primero se apuntan todos los archivos (en bloques) y después se borran: borrar mientras se lista descuadraría los bloques.
+      // Si algún archivo no se puede listar o borrar, se para sin borrar el parte (se puede reintentar sin dejar archivos sueltos).
+      const fallo = "No se han podido borrar todos los archivos del parte. El parte no se ha borrado: inténtalo de nuevo.";
       const rutas = [];
       for (let offset = 0; ; offset += TAM_BLOQUE) {
-        const { data: files } = await sb.storage.from(BUCKET).list(id, { limit: TAM_BLOQUE, offset });
-        rutas.push(...(files || []).map((f) => `${id}/${f.name}`));
-        if (!files || files.length < TAM_BLOQUE) break;
+        const { data: files, error } = await sb.storage.from(BUCKET).list(id, { limit: TAM_BLOQUE, offset });
+        if (error) throw new Error(fallo);
+        if (files.some((f) => f.id == null)) throw new Error(fallo + " (hay subcarpetas)");
+        rutas.push(...files.map((f) => `${id}/${f.name}`));
+        if (files.length < TAM_BLOQUE) break;
       }
-      for (let i = 0; i < rutas.length; i += TAM_BLOQUE) await sb.storage.from(BUCKET).remove(rutas.slice(i, i + TAM_BLOQUE));
-      ok(await sb.from("partes").delete().eq("id", id));
+      for (let i = 0; i < rutas.length; i += TAM_BLOQUE) {
+        const trozo = rutas.slice(i, i + TAM_BLOQUE);
+        // remove() no da error si no hay permiso: devuelve solo los que ha borrado
+        const { data, error } = await sb.storage.from(BUCKET).remove(trozo);
+        if (error || (data || []).length !== trozo.length) throw new Error(fallo);
+      }
+      const r = ok(await sb.from("partes").delete().eq("id", id).select("id"));
+      if (!r.length) throw new Error("No se ha podido borrar el parte (¿tienes permiso?)");
     },
     async anadirEvento(parte_id, estado, nota, created_at) {
       return ok(await sb.from("eventos").insert({ parte_id, estado, nota, ...(created_at ? { created_at } : {}) }).select().single());
@@ -116,8 +132,11 @@ function crearApiSupabase() {
     async descargarArchivo(path) { return ok(await sb.storage.from(BUCKET).download(path)); },
     async anadirFoto(parte_id, path, tipo) { return ok(await sb.from("fotos").insert({ parte_id, path, tipo }).select().single()); },
     async borrarFoto(foto) {
-      await sb.storage.from(BUCKET).remove([foto.path]);
-      ok(await sb.from("fotos").delete().eq("id", foto.id));
+      // Primero el registro y después el archivo: si falla el archivo queda un archivo sin usar, nunca una foto rota en la ficha
+      const r = ok(await sb.from("fotos").delete().eq("id", foto.id).select("id"));
+      if (!r.length) throw new Error("No se ha podido borrar la foto (¿tienes permiso?)");
+      const { error } = await sb.storage.from(BUCKET).remove([foto.path]);
+      if (error) console.warn("Archivo de la foto sin borrar", foto.path, error.message);
     },
 
     async listarTarifa() {
@@ -217,6 +236,11 @@ function crearApiDemo() {
     async actualizarParte(id, c) {
       const p = db.partes.find((x) => x.id === id); Object.assign(p, c, { updated_at: ahora() }); guardar(); return p;
     },
+    async actualizarVarios(ids, c) {
+      const ps = db.partes.filter((x) => ids.includes(x.id));
+      if (ps.length !== ids.length) throw new Error(`Solo se han encontrado ${ps.length} de ${ids.length} partes. Recarga y revísalo.`);
+      ps.forEach((p) => Object.assign(p, c, { updated_at: ahora() })); guardar();
+    },
     async borrarParte(id) {
       db.partes = db.partes.filter((p) => p.id !== id);
       db.eventos = db.eventos.filter((p) => p.parte_id !== id);
@@ -234,7 +258,7 @@ function crearApiDemo() {
     async anadirFoto(parte_id, path, tipo) {
       const f = { id: db.seq++, parte_id, path, tipo, created_at: ahora() }; db.fotos.push(f); guardar(); return f;
     },
-    async borrarFoto(foto) { archivos.delete(foto.path); db.fotos = db.fotos.filter((f) => f.id !== foto.id); guardar(); },
+    async borrarFoto(foto) { db.fotos = db.fotos.filter((f) => f.id !== foto.id); archivos.delete(foto.path); guardar(); },
     async listarTarifa() { return db.tarifa ?? []; },
     async guardarCodigo(c) { db.tarifa ??= []; const i = db.tarifa.findIndex((x) => x.codigo === c.codigo); if (i >= 0) db.tarifa[i] = { ...db.tarifa[i], ...c }; else db.tarifa.push(c); guardar(); },
     async borrarCodigo(cod) { db.tarifa = (db.tarifa ?? []).filter((x) => x.codigo !== cod); guardar(); },
