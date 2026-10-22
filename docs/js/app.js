@@ -1053,6 +1053,26 @@ async function vistaRevision() {
   pinta();
 }
 
+// ---- Partes ya facturados: se puede cambiar todo, pero avisando (factura_enviada: true / false / null = no consta)
+const envioFactura = (p) => p.factura_enviada === true ? `enviada a ${DEST.nombre} el ${fFecha(p.facturado_at)}`
+  : p.factura_enviada === false ? "sin enviar" : "envío: no consta";
+function avisoFactura(p) {
+  if (!p.factura_ref) return "";
+  return `<div class="aviso factura-info">🧾 En la factura <b>${esc(p.factura_ref)}</b>${p.facturado_at ? ` (${fFecha(p.facturado_at)})` : ""} · ${envioFactura(p)}${p.cobrado_at ? ` · cobrada el ${fFecha(p.cobrado_at)}` : ""}</div>`;
+}
+// Antes de guardar algo que cambia lo facturado: sin enviar, solo avisa; enviada o no consta, pide confirmación
+function puedeCambiarFacturado(p, que) {
+  if (!p?.factura_ref) return true;
+  if (p.factura_enviada === false) { toast(`Está en la factura ${p.factura_ref} (sin enviar): la relación saldrá con el cambio`, "ok"); return true; }
+  const como = p.factura_enviada ? `ya se envió a ${DEST.nombre} el ${fFecha(p.facturado_at)}` : `puede que ya se enviara a ${DEST.nombre} (no consta)`;
+  return confirm(`⚠️ Este parte está en la factura ${p.factura_ref}, que ${como}.\nSi cambias ${que}, no coincidirá con lo enviado.\n\n¿Guardar igualmente?`);
+}
+// Y después, si la factura no estaba solo marcada, queda anotado en el historial
+async function anotarCambioFacturado(p, que) {
+  if (!p?.factura_ref || p.factura_enviada === false) return;
+  try { await api.anadirEvento(p.id, null, `Cambiado ${que} con el parte ya en la factura ${p.factura_ref} (${envioFactura(p)}).`); } catch { /* no impide el cambio */ }
+}
+
 function sheetFechaRealizado(p, alGuardar) {
   const hoy = new Date().toLocaleDateString("sv-SE");
   const s = abrirSheet(`
@@ -1067,9 +1087,11 @@ function sheetFechaRealizado(p, alGuardar) {
     ev.preventDefault();
     const dia = new FormData(ev.target).get("dia");
     const realizado_at = diaAISO(dia);
+    if (!puedeCambiarFacturado(p, "la fecha de terminado")) return;
     cerrarSheet();
     try {
       await conCarga("Guardando…", () => api.actualizarParte(p.id, { realizado_at }));
+      await anotarCambioFacturado(p, "la fecha de terminado");
       p.realizado_at = realizado_at;
       toast(`Fecha cambiada: cuenta en ${nombreMes(mesDe(realizado_at)).toLowerCase()}`, "ok");
       alGuardar?.();
@@ -1177,7 +1199,7 @@ async function vistaFacturacion() {
       const p = term.find((x) => x.id === b.dataset.quitar); if (!p) return;
       const ref = p.factura_ref;
       if (!confirm(`¿Quitar a ${p.nombre || "este parte"} de la factura ${ref}?\nVolverá a "sin facturar"${p.cobrado_at ? " y se quitará también el cobro" : ""}.`)) return;
-      const cambios = { factura_ref: null, facturado_at: null, cobrado_at: null };
+      const cambios = { factura_ref: null, facturado_at: null, cobrado_at: null, factura_enviada: null };
       try {
         await conCarga("Guardando…", async () => {
           await api.actualizarParte(p.id, cambios);
@@ -1223,10 +1245,11 @@ async function vistaFacturacion() {
       const ref = prompt(`Nº de factura para ${aMarcar.length} parte(s) (${fEuros(conIVA(aMarcar.reduce((a, p) => a + (importeParte(p) || 0), 0)).total)} IVA incl.):`, `${mes}`);
       return ref && ref.trim() ? ref.trim() : null;
     };
-    const marcarFacturados = async (aMarcar, ref) => {
+    // enviada: true si se mandó la relación ("Enviar relación…"), false si solo se marcó
+    const marcarFacturados = async (aMarcar, ref, enviada) => {
       const fecha = new Date().toLocaleDateString("sv-SE");
       // Una sola actualización para todos: o quedan todos facturados o ninguno
-      const cambios = { factura_ref: ref, facturado_at: fecha, cobrado_at: null };
+      const cambios = { factura_ref: ref, facturado_at: fecha, cobrado_at: null, factura_enviada: !!enviada };
       await conCarga("Guardando…", async () => { await api.actualizarVarios(aMarcar.map((p) => p.id), cambios); aMarcar.forEach((p) => Object.assign(p, cambios)); });
       toast(`Factura ${ref} anotada. Cobro previsto: ${fFecha(sumarDias(fecha, DIAS_COBRO()))}`, "ok"); sel.clear(); pinta();
     };
@@ -1236,7 +1259,7 @@ async function vistaFacturacion() {
       try {
         const ok = await enviarPDFRelacion(ref);
         if (!ok && !confirm("No se ha enviado el PDF. ¿Marcar igualmente los partes como facturados?")) return;
-        await marcarFacturados(aMarcar, ref);
+        await marcarFacturados(aMarcar, ref, ok);
       } catch { /* conCarga avisa */ }
     });
     $("#fPDF")?.addEventListener("click", async () => { try { await enviarPDFRelacion(null); } catch { /* conCarga avisa */ } });
@@ -1257,7 +1280,7 @@ async function vistaFacturacion() {
     $("#fMarcar")?.addEventListener("click", async () => {
       const aMarcar = elegidos.filter((p) => !p.factura_ref);
       const ref = pedirFactura(aMarcar); if (!ref) return;
-      try { await marcarFacturados(aMarcar, ref); } catch { /* conCarga avisa */ }
+      try { await marcarFacturados(aMarcar, ref, false); } catch { /* conCarga avisa */ }
     });
     const cambiarCobro = async (clave, valor) => {
       const [ref, fecha] = clave.split("|");
@@ -2123,7 +2146,12 @@ async function vistaFormulario(id) {
     if (!f.aseguradora) return toast("Elige la aseguradora", "error");
     try {
       if (id) {
+        const num = (v) => (v == null || v === "" ? null : Number(v));
+        const tocaFactura = ["importe_valorado", "importe_autorizado"].some((k) => k in f && num(f[k]) !== num(p[k]))
+          || ("realizado_at" in f && f.realizado_at && mesDe(f.realizado_at) !== mesDe(p.realizado_at));
+        if (tocaFactura && !puedeCambiarFacturado(p, "los importes o la fecha de terminado")) return;
         await conCarga("Guardando…", () => api.actualizarParte(id, f));
+        if (tocaFactura) await anotarCambioFacturado(p, "los importes o la fecha de terminado");
         toast("Guardado", "ok");
         location.replace("#/parte/" + id);
       } else {
@@ -2204,6 +2232,7 @@ async function vistaParte(id) {
   </header>
   ${navPartes(p.id)}
 
+  ${avisoFactura(p)}
   ${avisoCobertura(p)}
   ${esConexion(p) ? `<div class="aviso cx-info">💬 <b>Conexión · presupuesto particular.</b> No es un encargo del seguro: el presupuesto se manda al cliente, con IVA (${ivaDe(p)} %), y lo paga él. No entra en la relación de ${esc(DEST.nombre)}.</div>` : ""}
   ${p.repetido_de ? `<div class="aviso repetido-info">🔁 <b>Parte repetido</b>${p.cambios_repetido ? ` · Cambios: ${esc(p.cambios_repetido)}` : ""}
@@ -2830,6 +2859,11 @@ function sheetFase(p, destino) {
     const firmadoFile = inFirmado?.files[0] || null;
     const firmaBlob = firma && !firma.vacio ? await firma.aBlob() : null;
     // La ventana sigue abierta hasta que todo esté guardado: si falla, no se pierde nada y se puede reintentar
+    const sacaDeRealizado = destino && p.estado === "realizado" && destino !== "realizado";
+    const queFactura = sacaDeRealizado ? "la fase (deja de estar realizado)" : "el importe";
+    const tocaFactura = sacaDeRealizado || "importe_valorado" in cambios || "importe_autorizado" in cambios;
+    if (tocaFactura && !hecho.avisado && !puedeCambiarFacturado(p, queFactura)) return;
+    hecho.avisado = true;   // al reintentar tras un fallo no se vuelve a preguntar
     const btn = ev.target.querySelector("[type=submit]");
     btn.disabled = true; $("#fError", s).hidden = true;
     try {
@@ -2847,6 +2881,7 @@ function sheetFase(p, destino) {
       btn.disabled = false; $("#fError", s).hidden = false;
       return;
     }
+    if (tocaFactura) await anotarCambioFacturado(p, queFactura);
     sessionSet(claveNota, "");
     cerrarSheet();
     try {
@@ -3183,8 +3218,10 @@ async function vistaLineas(id, tipo) {
       cambios.importe_autorizado = limpias.length ? totalesLineas(limpias).base : null;
       if (autorizaAhora) cambios.estado = "autorizado";
     }
+    if (!puedeCambiarFacturado(p, "los códigos")) return;
     await conCarga("Guardando…", async () => {
       await api.actualizarParte(id, cambios);
+      await anotarCambioFacturado(p, "los códigos");
       // Sin importes en el historial: lo leen también usuarios que no ven precios
       if (autorizaAhora) await anotarFase(p, "autorizado", `Valoración confirmada: ${limpias.length} código(s).`);
       if (valoraAhora) await anotarFase(p, "valorado", `Valoración: ${limpias.length} código(s).`);
