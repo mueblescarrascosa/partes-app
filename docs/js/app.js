@@ -1101,7 +1101,11 @@ function datosFacturacion() {
 async function vistaFacturacion() {
   try { S.partes = await api.listarPartes(); } catch { /* se usa lo que haya */ }
   let mes = sessionGet("factMes") || mesDe(new Date().toISOString());
-  const sel = new Set();
+  // Si vuelves de abrir un parte desde aquí, se recupera lo que tenías marcado y dónde estabas
+  const vuelta = S.factVuelta && S.factVuelta.mes === mes ? S.factVuelta : null;
+  S.factVuelta = null;
+  const sel = new Set(vuelta ? vuelta.ids : []);
+  const abiertos = new Set(vuelta ? vuelta.abiertos : []);
   app.innerHTML = `
   <header class="barra">
     <button class="icono" id="volver" aria-label="Volver">${I.back}</button>
@@ -1120,20 +1124,28 @@ async function vistaFacturacion() {
     const sinImporte = elegidos.filter((p) => importeParte(p) == null).length;
     const pendientes = facturas.filter((f) => !f.cobrado);
     const pendTotal = pendientes.reduce((a, f) => a + f.total, 0);
+    const lineasFila = (p) => [p.lineas_autorizadas, p.lineas_realizadas, p.lineas_valoracion].find((l) => (l || []).length) || [];
+    // Cada fila: casilla para marcar, datos (al tocarlos se ven sus códigos) y "Ver ›" para abrir el parte
+    const fila = (p) => {
+      const imp = importeParte(p), ls = lineasFila(p);
+      const est = (p.cobrado_at ? `<em class="ok">Cobrado ${fFecha(p.cobrado_at)}</em>` : p.factura_ref ? `<em>Facturado · ${esc(p.factura_ref)}</em>` : "")
+        + (p.factura_ref ? `<button type="button" class="quitar-fact" data-quitar="${p.id}">Quitar de la factura</button>` : "");
+      return `<div class="fact-fila ${p.factura_ref ? "facturado" : ""}" data-fila="${p.id}">
+        <label class="fact-check"><input type="checkbox" data-id="${p.id}" ${sel.has(p.id) ? "checked" : ""}></label>
+        <span class="fact-info" data-desplegar="${p.id}"><b>${esc(p.nombre || "Sin nombre")} <i class="fact-flecha">${abiertos.has(p.id) ? "▾" : "▸"}</i></b><small><button type="button" class="fecha-btn" data-fecha="${p.id}" title="Cambiar la fecha">📅 ${fFecha(p.realizado_at)}</button> · ${esc(p.aseguradora || "")} ${esc(p.expediente || "")}${p.poblacion ? " · " + esc(p.poblacion) : ""}</small>${est}</span>
+        <span class="fact-der"><b class="fact-imp ${imp == null ? "sin" : ""}">${imp == null ? "sin importe" : fEuros(imp)}</b><a class="btn peq fact-ver" href="#/parte/${p.id}" data-ver="${p.id}">Ver ›</a></span>
+        ${abiertos.has(p.id) ? `<div class="fact-lineas">${ls.length ? ls.map((l) => `<div><span><b>${esc(l.codigo || "—")}</b> ${esc(l.descripcion || "")}</span><span>${Number(l.cantidad) || 0}×<span class="precio"> ${fEuros(importeLinea(l))}</span></span></div>`).join("") : `<p class="suave">Sin códigos. ${esc((p.averia || "").slice(0, 140))}</p>`}</div>` : ""}
+      </div>`;
+    };
+    const porFacturar = delMes.filter((p) => !p.factura_ref), yaFacturados = delMes.filter((p) => p.factura_ref);
     $("#fact").innerHTML = `
       ${sinFacturarAnteriores.length ? `<div class="aviso-rojo">🧾 Hay <b>${sinFacturarAnteriores.length}</b> parte(s) terminados en meses anteriores sin facturar (${[...new Set(sinFacturarAnteriores.map((p) => nombreMes(mesDe(p.realizado_at))))].join(", ")}).</div>` : ""}
       <section class="tarjeta">
         <div class="h3-fila"><h3>Terminados en</h3>
           <select id="fMes">${meses.map((m) => `<option value="${m}" ${m === mes ? "selected" : ""}>${nombreMes(m)}</option>`).join("")}</select></div>
-        ${delMes.length ? `<div class="fact-lista">${delMes.map((p) => {
-          const imp = importeParte(p);
-          const est = (p.cobrado_at ? `<em class="ok">Cobrado ${fFecha(p.cobrado_at)}</em>` : p.factura_ref ? `<em>Facturado · ${esc(p.factura_ref)}</em>` : "")
-            + (p.factura_ref ? `<button type="button" class="quitar-fact" data-quitar="${p.id}">Quitar de la factura</button>` : "");
-          return `<label class="fact-fila ${p.factura_ref ? "facturado" : ""}">
-            <input type="checkbox" data-id="${p.id}" ${sel.has(p.id) ? "checked" : ""}>
-            <span class="fact-info"><b>${esc(p.nombre || "Sin nombre")}</b><small><button type="button" class="fecha-btn" data-fecha="${p.id}" title="Cambiar la fecha">📅 ${fFecha(p.realizado_at)}</button> · ${esc(p.aseguradora || "")} ${esc(p.expediente || "")}${p.poblacion ? " · " + esc(p.poblacion) : ""}</small>${est}</span>
-            <b class="fact-imp ${imp == null ? "sin" : ""}">${imp == null ? "sin importe" : fEuros(imp)}</b></label>`;
-        }).join("")}</div>
+        ${delMes.length ? `
+        ${porFacturar.length ? `<h4 class="fact-grupo">Por facturar <b>${porFacturar.length}</b></h4><div class="fact-lista">${porFacturar.map(fila).join("")}</div>` : '<p class="suave">Todos los partes de este mes ya están facturados.</p>'}
+        ${yaFacturados.length ? `<h4 class="fact-grupo">Ya facturados <b>${yaFacturados.length}</b></h4><div class="fact-lista">${yaFacturados.map(fila).join("")}</div>` : ""}
         <div class="fact-total"><span>${elegidos.length} seleccionados${sinImporte ? ` · <b class="rojo">${sinImporte} sin importe</b>` : ""}</span>
           <div class="fact-desglose"><span>Base imponible</span><b>${fEuros(total)}</b><span>IVA ${IVA_FACT()}%</span><b>${fEuros(conIVA(total).iva)}</b><span>Total factura</span><b class="grande">${fEuros(conIVA(total).total)}</b></div></div>
         <div class="lista-botones">
@@ -1176,6 +1188,15 @@ async function vistaFacturacion() {
       } catch { /* conCarga avisa */ }
     }));
     $$("#fact .fact-fila input").forEach((c) => c.onchange = () => { c.checked ? sel.add(c.dataset.id) : sel.delete(c.dataset.id); pinta(); });
+    $$("#fact [data-desplegar]").forEach((x) => x.addEventListener("click", (e) => {
+      if (e.target.closest("button")) return;   // la fecha y "Quitar de la factura" van aparte
+      const id = x.dataset.desplegar; abiertos.has(id) ? abiertos.delete(id) : abiertos.add(id); pinta();
+    }));
+    // "Ver ›": se apunta lo marcado y el orden del mes, para volver aquí igual y poder pasar de un parte al siguiente
+    $$("#fact [data-ver]").forEach((a) => a.addEventListener("click", () => {
+      S.factVuelta = { mes, ids: [...sel], abiertos: [...abiertos] };
+      S.navIds = [...porFacturar, ...yaFacturados].map((p) => p.id);
+    }));
     const lineasDe = (p) => [p.lineas_autorizadas, p.lineas_realizadas, p.lineas_valoracion].find((l) => (l || []).length) || [];
     const filasExp = () => elegidos.map((p) => ({ ...p, importe: importeParte(p) || 0, lineas: lineasDe(p), autorizado: !(p.lineas_autorizadas || []).length && p.importe_autorizado != null,
       trabajo: lineasDe(p).map((l) => `${l.codigo || ""} ${l.descripcion || ""}`.trim()).join("; ") || (p.averia || "").slice(0, 90) }));
@@ -1247,6 +1268,7 @@ async function vistaFacturacion() {
     $$("[data-descobrar]").forEach((b) => b.onclick = () => cambiarCobro(b.dataset.descobrar, null));
   };
   pinta();
+  if (vuelta && S.scroll.facturacion) window.scrollTo(0, S.scroll.facturacion);
 }
 
 // Modalidad (asistencia: mano de obra cubierta, material no), avisos de cobertura y límite de importe
@@ -2148,6 +2170,18 @@ async function vistaFormulario(id) {
 }
 
 // ------------------------------------------------------------------ Detalle
+// "‹ Anterior · Siguiente ›": recorre los partes en el orden de la lista (o de la facturación) desde la que se abrió la ficha
+function navPartes(id) {
+  const ids = S.navIds || [], i = ids.indexOf(id);
+  if (i < 0 || ids.length < 2) return "";
+  const ant = ids[i - 1], sig = ids[i + 1];
+  return `<nav class="nav-partes">
+    ${ant ? `<a class="btn peq" href="#/parte/${ant}">‹ Anterior</a>` : "<span></span>"}
+    <span class="suave">${i + 1} de ${ids.length}</span>
+    ${sig ? `<a class="btn peq" href="#/parte/${sig}">Siguiente ›</a>` : "<span></span>"}
+  </nav>`;
+}
+
 async function vistaParte(id) {
   let p;
   try { p = await conCarga("Cargando…", () => api.obtenerParte(id)); }
@@ -2168,6 +2202,7 @@ async function vistaParte(id) {
     <h1><span class="aseg">${esc(p.aseguradora)}</span> ${esc(p.expediente || "")}</h1>
     ${esLector() ? "<span></span>" : `<button class="icono" id="menuParte" aria-label="Más opciones">${I.more}</button>`}
   </header>
+  ${navPartes(p.id)}
 
   ${avisoCobertura(p)}
   ${esConexion(p) ? `<div class="aviso cx-info">💬 <b>Conexión · presupuesto particular.</b> No es un encargo del seguro: el presupuesto se manda al cliente, con IVA (${ivaDe(p)} %), y lo paga él. No entra en la relación de ${esc(DEST.nombre)}.</div>` : ""}
@@ -2258,7 +2293,7 @@ async function vistaParte(id) {
     <p class="suave">Va a la papelera (icono de la persona → Papelera) y se puede recuperar.</p></div>`}
   <div style="height:40px"></div>`;
 
-  $("#volver").onclick = () => (location.hash = "/");
+  $("#volver").onclick = () => (location.hash = S.volverA || "/");
   $("#menuParte")?.addEventListener("click", () => menuParte(p));
   if (S.abrirInforme === p.id) { S.abrirInforme = null; setTimeout(() => flujoInforme(p), 300); }
   $("#aContacto").onclick = () => guardarContacto(p);
