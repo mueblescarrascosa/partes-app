@@ -200,9 +200,9 @@ function crearApiSupabase() {
       if (error) return {};
       return data?.datos ?? {};
     },
-    async guardarAjustes(datos) {
-      ok(await sb.from("ajustes").upsert({ id: 1, datos, updated_at: new Date().toISOString() }));
-    },
+    // Añade o cambia solo estas claves y deja las demás como están, en una sola operación (función fusionar_ajustes):
+    // así la copia de seguridad y el formulario de Ajustes no se pisan. No quita claves: para eso, guárdala vacía.
+    async fusionarAjustes(cambios) { return ok(await sb.rpc("fusionar_ajustes", { cambios })); },
     async adminUsuarios(accion, datos = {}) {
       const { data, error } = await sb.functions.invoke("admin-usuarios", { body: { accion, ...datos } });
       if (error) {
@@ -318,7 +318,7 @@ function crearApiDemo() {
     async guardarCodigo(c) { db.tarifa ??= []; const i = db.tarifa.findIndex((x) => x.codigo === c.codigo); if (i >= 0) db.tarifa[i] = { ...db.tarifa[i], ...c }; else db.tarifa.push(c); guardar(); },
     async borrarCodigo(cod) { db.tarifa = (db.tarifa ?? []).filter((x) => x.codigo !== cod); guardar(); },
     async leerAjustes() { return db.ajustes ?? {}; },
-    async guardarAjustes(d) { db.ajustes = d; guardar(); },
+    async fusionarAjustes(c) { db.ajustes = { ...(db.ajustes ?? {}), ...c }; guardar(); return db.ajustes; },
     async adminUsuarios(accion, d = {}) {
       db.usuarios ??= [{ id: "demo", email: "demo@demo", nombre: "Usuario demo", es_admin: true, miembro: true }];
       if (accion === "listar") return { usuarios: db.usuarios };

@@ -621,7 +621,7 @@ async function copiaSeguridad() {
       CFG.ULTIMA_COPIA = ahora;
       // Se apunta en los ajustes compartidos para que el aviso valga para todos los móviles
       if (esAdmin()) {
-        try { const a = await api.leerAjustes(); await api.guardarAjustes({ ...a, ULTIMA_COPIA: ahora }); } catch { /* no pasa nada */ }
+        try { await api.fusionarAjustes({ ULTIMA_COPIA: ahora }); } catch { /* no pasa nada */ }
       }
     });
     sheetResumen(false, true);
@@ -749,7 +749,7 @@ async function copiaCompleta() {
     const ahora = hoy.toISOString();
     sessionSet("ultimaCopia", ahora); CFG.ULTIMA_COPIA = ahora;
     if (!fallos.length) CFG.ULTIMA_COPIA_ARCHIVOS = ahora;
-    try { const a = await api.leerAjustes(); await api.guardarAjustes({ ...a, ULTIMA_COPIA: ahora, ...(fallos.length ? {} : { ULTIMA_COPIA_ARCHIVOS: ahora }) }); } catch { /* no pasa nada */ }
+    try { await api.fusionarAjustes({ ULTIMA_COPIA: ahora, ...(fallos.length ? {} : { ULTIMA_COPIA_ARCHIVOS: ahora }) }); } catch { /* no pasa nada */ }
     cargando(false);
     sheetResumen(false, true);
     if (!fallos.length) { toast(`✅ Copia completa: ${lista.length} archivos (${fTam(total)}) + Excel`, "ok"); return; }
@@ -3243,9 +3243,8 @@ async function vistaAjustes() {
       }),
     };
     if (!datos.ASEGURADORAS.includes("Otra")) datos.ASEGURADORAS.push("Otra");
-    if (CFG.ULTIMA_COPIA) datos.ULTIMA_COPIA = CFG.ULTIMA_COPIA;
-    if (CFG.ULTIMA_COPIA_ARCHIVOS) datos.ULTIMA_COPIA_ARCHIVOS = CFG.ULTIMA_COPIA_ARCHIVOS;
-    await conCarga("Guardando…", () => api.guardarAjustes(datos));
+    // Solo las claves del formulario (siempre todas, completas): las fechas de las copias no se tocan
+    await conCarga("Guardando…", () => api.fusionarAjustes(datos));
     ajustesCargados = false; await cargarAjustes();
     toast("Ajustes guardados", "ok");
   });
