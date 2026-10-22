@@ -3362,7 +3362,11 @@ function menuUsuarioAdmin(u) {
       ${soyYo || u.es_admin || u.solo_lectura ? "" : `<button class="btn ancho" id="uPrecios">${u.ver_precios === false ? "💶 Dejarle ver los precios" : "🙈 Ocultarle los precios"}</button>`}
       ${soyYo || u.es_admin || !u.miembro ? "" : `<button class="btn ancho" id="uLectura">${u.solo_lectura ? "✏️ Quitar solo lectura" : "👁 Solo lectura (ve los partes sin precios; solo añade notas y fotos)"}</button>`}
       ${soyYo ? "" : `<button class="btn ancho" id="uAdmin">${u.es_admin ? "Quitar administrador" : "Hacer administrador"}</button>`}
-      ${soyYo ? "" : '<button class="btn ancho peligro" id="uBorrar">Borrar usuario</button>'}
+      ${soyYo ? "" : `<button class="btn ancho peligro" id="uQuitar" ${u.es_admin ? "disabled" : ""}>Quitar del equipo de Partes</button>
+      <button class="btn ancho peligro" id="uBorrar" ${u.es_admin || u.datos_otras_apps ? "disabled" : ""}>Borrar la cuenta del todo</button>
+      <p class="suave">${u.es_admin ? "Es administrador: para quitarlo o borrarlo, quítale antes el permiso de administrador."
+        : u.datos_otras_apps ? `<b>Esta cuenta tiene ${u.datos_otras_apps} datos en otra app del proyecto (Olivas)</b>: borrarla los borraría también, así que solo se puede quitar del equipo de Partes.`
+        : "<b>Quitar del equipo</b>: deja de poder entrar en Partes, pero su cuenta sigue existiendo (por si usa otra app del proyecto). <b>Borrar la cuenta</b>: la elimina del todo. En los dos casos sus partes, notas y fotos se conservan."}</p>`}
       <button class="btn texto ancho" data-cerrar>Cerrar</button>
     </div>`);
   const fin = async (msg) => { cerrarSheet(); toast(msg, "ok"); S.miembros = await api.miembros().catch(() => S.miembros); pintarUsuarios(); };
@@ -3389,10 +3393,15 @@ function menuUsuarioAdmin(u) {
     await conCarga("Guardando…", () => api.adminUsuarios("editar", { id: u.id, es_admin: !u.es_admin }));
     fin("Permisos cambiados");
   });
+  $("#uQuitar", s)?.addEventListener("click", async () => {
+    if (!confirm(`¿Quitar a ${u.nombre || u.email} del equipo de Partes?\nYa no podrá entrar en Partes. Su cuenta sigue existiendo y sus partes se conservan.`)) return;
+    try { await conCarga("Quitando…", () => api.adminUsuarios("quitar", { id: u.id })); } catch { return; }
+    fin("Quitado del equipo de Partes");
+  });
   $("#uBorrar", s)?.addEventListener("click", async () => {
-    if (!confirm(`¿Borrar a ${u.nombre || u.email}? Ya no podrá entrar. Sus partes se conservan.`)) return;
-    await conCarga("Borrando…", () => api.adminUsuarios("borrar", { id: u.id }));
-    fin("Usuario borrado");
+    if (!confirm(`¿Borrar del todo la cuenta de ${u.nombre || u.email}?\nNo se puede deshacer. Sus partes, notas y fotos se conservan.`)) return;
+    try { await conCarga("Borrando…", () => api.adminUsuarios("borrar", { id: u.id })); } catch { return; }
+    fin("Cuenta borrada");
   });
 }
 

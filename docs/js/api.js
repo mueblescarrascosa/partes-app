@@ -323,7 +323,7 @@ function crearApiDemo() {
       db.usuarios ??= [{ id: "demo", email: "demo@demo", nombre: "Usuario demo", es_admin: true, miembro: true }];
       if (accion === "listar") return { usuarios: db.usuarios };
       if (accion === "crear") { db.usuarios.push({ id: uuid(), email: d.email, nombre: d.nombre, es_admin: !!d.es_admin, miembro: true }); guardar(); return { ok: true }; }
-      if (accion === "borrar") { db.usuarios = db.usuarios.filter((u) => u.id !== d.id); guardar(); return { ok: true }; }
+      if (accion === "borrar" || accion === "quitar") { db.usuarios = db.usuarios.filter((u) => u.id !== d.id); guardar(); return { ok: true }; }
       return { ok: true };
     },
     async editarMiembro(id, c) { const u = (db.usuarios || []).find((x) => x.id === id); if (u) Object.assign(u, c); guardar(); },
