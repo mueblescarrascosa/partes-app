@@ -14,6 +14,14 @@ function crearApiSupabase() {
   let lector = false;
   const tablaPartes = () => (lector ? "partes_lector" : "partes");
   const tablaEventos = () => (lector ? "eventos_lector" : "eventos");
+  // La lista lleva todas las columnas de partes menos datos_ia (la respuesta completa de la IA: casi un tercio
+  // de lo que se descarga y ninguna pantalla la lee). La ficha (obtenerParte) sí lo carga todo.
+  // Si añades una columna a partes que use la lista, la agenda, la facturación o el CSV, añádela aquí.
+  const COLUMNAS_LISTA = "id,created_at,updated_at,creado_por,asignado_a,aseguradora,expediente,poliza,fecha_encargo,nombre,direccion,"
+    + "codigo_postal,poblacion,provincia,telefono,telefono2,averia,tramitador_nombre,tramitador_telefono,tramitador_email,estado,fecha_cita,"
+    + "importe_valorado,importe_autorizado,documento_path,firma_path,informe_path,num_encargo,num_siniestro,lineas_valoracion,lineas_realizadas,"
+    + "borrado_at,repetido_de,cambios_repetido,realizado_at,factura_ref,facturado_at,cobrado_at,tipo,lineas_autorizadas,perjudicado_nombre,"
+    + "perjudicado_telefono,modalidad,aviso_cobertura,limite_importe";
 
   // Supabase devuelve como mucho 1.000 filas por consulta: las listas se leen en bloques.
   // Los bloques van ordenados por la clave única (no cambia aunque alguien edite mientras se lee)
@@ -56,7 +64,8 @@ function crearApiSupabase() {
     async miembros() { return ok(await sb.from("miembros").select("user_id,nombre,telefono,es_admin,ver_precios,solo_lectura").order("nombre")); },
 
     async listarPartes() {
-      const r = await leerTodo(() => sb.from(tablaPartes()).select("*").is("borrado_at", null));
+      // El lector lee su vista entera (ya no tiene datos_ia ni importes)
+      const r = await leerTodo(() => sb.from(tablaPartes()).select(lector ? "*" : COLUMNAS_LISTA).is("borrado_at", null));
       return r.sort(porFecha("updated_at", true));
     },
     async usoIA(desde) {
