@@ -2192,10 +2192,12 @@ async function pintarFotos(p) {
         <div class="lista-botones">
           <button class="btn ancho" id="fVer">👁 Verla en grande</button>
           <button class="btn ancho" id="fDibujar">✏️ Dibujar encima (medidas, daños…)</button>
+          ${puedeBorrarFoto(f) ? '<button class="btn ancho" id="fGirar">↻ Enderezar</button>' : ""}
           <button class="btn texto ancho" data-cerrar>Cerrar</button>
         </div>
         <p class="suave">El dibujo se guarda aparte, en Bocetos (interno). La foto original no se toca.</p>`);
       $("#fVer", s).onclick = async () => { cerrarSheet(); window.open(await api.urlArchivo(f.path), "_blank"); };
+      $("#fGirar", s)?.addEventListener("click", () => enderezarFoto(p, f));
       $("#fDibujar", s).onclick = async () => {
         cerrarSheet();
         let fondo;
@@ -2236,6 +2238,28 @@ function sheetPreviaFotos(titulo, files, alGuardar) {
     </div>`);
   const pv = previaFotos($("#pvLista", s), files);
   $("#pvGuardar", s).onclick = () => { cerrarSheet(); alGuardar(pv.giros); pv.liberar(); };
+}
+
+// Enderezar una foto ya guardada (su autor o un admin, como al borrarla). Se guarda girada como foto nueva, con el mismo
+// tipo y la misma fecha (mismo sitio en la ficha y los informes), y después se borra la original. Así no hace falta
+// sobrescribir archivos (el lector no puede). Si falla el borrado quedan las dos y la torcida se borra a mano.
+async function enderezarFoto(p, f) {
+  let blob;
+  try { blob = await conCarga("Abriendo foto…", () => api.descargarArchivo(f.path)); } catch { return; }
+  if (!blob) return toast("No se pudo abrir la foto", "error");
+  sheetPreviaFotos("Enderezar foto", [blob], async ([g]) => {
+    if (!g) return;
+    try {
+      await conCarga("Guardando…", async () => {
+        const girada = await girarImagen(blob, g);
+        const path = await api.subirArchivo(`${p.id}/foto_${Date.now()}_1.jpg`, girada, "image/jpeg");
+        await api.anadirFoto(p.id, path, f.tipo, f.created_at);
+        try { await api.borrarFoto(f); } catch { toast("Foto enderezada, pero no se pudo borrar la original: bórrala a mano", "error"); }
+      });
+      toast("Foto enderezada", "ok");
+    } catch { /* conCarga avisa */ }
+    vistaParte(p.id);
+  });
 }
 
 async function subirFotos(p, files, tipo, giros = []) {

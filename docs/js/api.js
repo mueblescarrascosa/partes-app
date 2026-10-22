@@ -137,7 +137,8 @@ function crearApiSupabase() {
       return d.signedUrl;
     },
     async descargarArchivo(path) { return ok(await sb.storage.from(BUCKET).download(path)); },
-    async anadirFoto(parte_id, path, tipo) { return ok(await sb.from("fotos").insert({ parte_id, path, tipo }).select().single()); },
+    // created_at opcional: al enderezar una foto, la nueva conserva la fecha de la original (mismo sitio en la ficha y los informes)
+    async anadirFoto(parte_id, path, tipo, created_at) { return ok(await sb.from("fotos").insert({ parte_id, path, tipo, ...(created_at ? { created_at } : {}) }).select().single()); },
     async borrarFoto(foto) {
       // Primero el registro y después el archivo: si falla el archivo queda un archivo sin usar, nunca una foto rota en la ficha
       const r = ok(await sb.from("fotos").delete().eq("id", foto.id).select("id"));
@@ -262,8 +263,8 @@ function crearApiDemo() {
     async subirArchivo(path, blob) { archivos.set(path, await blobADataURL(blob)); guardar(); return path; },
     async urlArchivo(path) { return archivos.get(path) ?? ""; },
     async descargarArchivo(path) { const u = archivos.get(path); return u ? (await fetch(u)).blob() : null; },
-    async anadirFoto(parte_id, path, tipo) {
-      const f = { id: db.seq++, parte_id, path, tipo, created_at: ahora() }; db.fotos.push(f); guardar(); return f;
+    async anadirFoto(parte_id, path, tipo, created_at) {
+      const f = { id: db.seq++, parte_id, path, tipo, created_at: created_at || ahora(), creado_por: YO.user_id }; db.fotos.push(f); guardar(); return f;
     },
     async borrarFoto(foto) { db.fotos = db.fotos.filter((f) => f.id !== foto.id); archivos.delete(foto.path); guardar(); },
     async listarTarifa() { return db.tarifa ?? []; },
