@@ -1,12 +1,13 @@
 // Service worker: permite instalar la app y abrirla sin conexión (la última versión cargada).
-const CACHE = "partes-v36";
+const CACHE = "partes-v37";
 const COMPARTIDO = "partes-compartido";
 const BASE = ["./", "index.html", "styles.css", "js/app.js", "js/api.js", "js/util.js", "js/pdf.js", "js/boceto.js", "js/config.js",
 "manifest.webmanifest", "icons/icon-192.png"];
 
 self.addEventListener("install", (e) => { e.waitUntil(caches.open(CACHE).then((c) => c.addAll(BASE)).then(() => self.skipWaiting())); });
+// Solo se borran las cachés propias (partes-*): en la misma web (mueblescarrascosa.github.io) hay otras apps con las suyas
 self.addEventListener("activate", (e) => {
-  e.waitUntil(caches.keys().then((ks) => Promise.all(ks.filter((k) => k !== CACHE && k !== COMPARTIDO).map((k) => caches.delete(k)))).then(() => self.clients.claim()));
+  e.waitUntil(caches.keys().then((ks) => Promise.all(ks.filter((k) => k.startsWith("partes-") && k !== CACHE && k !== COMPARTIDO).map((k) => caches.delete(k)))).then(() => self.clients.claim()));
 });
 // Red primero (siempre la versión más nueva); si no hay conexión, caché.
 self.addEventListener("fetch", (e) => {
