@@ -75,14 +75,19 @@ export const blobADataURL = (blob) => new Promise((res, rej) => {
 });
 
 /** Reduce una imagen a maxLado px y la devuelve como JPEG Blob */
-export async function comprimirImagen(file, maxLado = 1600, calidad = 0.82) {
+// grados: giro en sentido horario (0, 90, 180 o 270) que se aplica en el mismo paso, sin comprimir dos veces
+export async function comprimirImagen(file, maxLado = 1600, calidad = 0.82, grados = 0) {
   const bmp = await cargarImagen(file);
   const k = Math.min(1, maxLado / Math.max(bmp.width, bmp.height));
+  const w = Math.round(bmp.width * k), h = Math.round(bmp.height * k);
+  const g = ((Number(grados) % 360) + 360) % 360;
+  const lado = g === 90 || g === 270;
   const c = document.createElement("canvas");
-  c.width = Math.round(bmp.width * k); c.height = Math.round(bmp.height * k);
+  c.width = lado ? h : w; c.height = lado ? w : h;
   const ctx = c.getContext("2d");
   ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, c.width, c.height);
-  ctx.drawImage(bmp, 0, 0, c.width, c.height);
+  ctx.translate(c.width / 2, c.height / 2); ctx.rotate((g * Math.PI) / 180);
+  ctx.drawImage(bmp, -w / 2, -h / 2, w, h);
   return new Promise((res) => c.toBlob(res, "image/jpeg", calidad));
 }
 /** Gira una imagen (blob) en sentido horario: 90, 180 o 270 grados */

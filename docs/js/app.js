@@ -1319,14 +1319,15 @@ function elegirParteParaFotos(imgs) {
     const b = ev.target.closest("[data-id]"); if (!b) return;
     const p = S.partes.find((x) => x.id === b.dataset.id); if (!p) return;
     const tipo = idxEstado(p.estado) >= idxEstado("autorizado") ? "despues" : "antes";
-    cerrarSheet();
-    try {
-      await subirFotos(p, imgs, tipo);
-      S.compartidos = null;
-      toast(`${imgs.length === 1 ? "Foto añadida" : imgs.length + " fotos añadidas"} al parte`, "ok");
-      location.hash = "/parte/" + p.id;
-    } catch (e) { toast("No se pudieron subir: " + e.message, "error"); }
-    finally { cargando(false); }
+    sheetPreviaFotos(`Fotos para ${p.nombre || p.expediente || "el parte"}`, imgs, async (giros) => {
+      try {
+        await subirFotos(p, imgs, tipo, giros);
+        S.compartidos = null;
+        toast(`${imgs.length === 1 ? "Foto añadida" : imgs.length + " fotos añadidas"} al parte`, "ok");
+        location.hash = "/parte/" + p.id;
+      } catch (e) { toast("No se pudieron subir: " + e.message, "error"); }
+      finally { cargando(false); }
+    });
   });
   pinta();
   setTimeout(() => $("#bParte", s).focus(), 200);
@@ -2211,14 +2212,40 @@ async function pintarFotos(p) {
   }
 }
 
-async function subirFotos(p, files, tipo) {
+// Vista previa de fotos antes de guardarlas: miniaturas con ↻ para enderezar las que el móvil guardó de lado o del revés
+// (la orientación que guarda el móvil ya se respeta; esto es para cuando se equivoca). Devuelve los giros elegidos.
+function previaFotos(cont, files) {
+  const giros = files.map(() => 0);
+  const urls = files.map((f) => URL.createObjectURL(f));
+  cont.innerHTML = files.length ? `<div class="previa-fotos">${urls.map((u, i) => `<figure><img src="${u}" alt=""><button type="button" class="girar" data-i="${i}" aria-label="Girar 90 grados">↻</button></figure>`).join("")}</div>
+    <small class="suave">Toca ↻ para enderezar una foto que haya salido de lado o del revés.</small>` : "";
+  $$(".girar", cont).forEach((b) => b.addEventListener("click", () => {
+    const i = Number(b.dataset.i);
+    giros[i] = (giros[i] + 90) % 360;
+    b.previousElementSibling.style.transform = `rotate(${giros[i]}deg)`;
+  }));
+  return { giros, liberar: () => urls.forEach((u) => URL.revokeObjectURL(u)) };
+}
+function sheetPreviaFotos(titulo, files, alGuardar) {
+  const s = abrirSheet(`
+    <h2>${esc(titulo)}</h2>
+    <div id="pvLista"></div>
+    <div class="pie-form">
+      <button type="button" class="btn" data-cerrar>Cancelar</button>
+      <button type="button" class="btn primario" id="pvGuardar">Guardar${files.length > 1 ? ` (${files.length})` : ""}</button>
+    </div>`);
+  const pv = previaFotos($("#pvLista", s), files);
+  $("#pvGuardar", s).onclick = () => { cerrarSheet(); alGuardar(pv.giros); pv.liberar(); };
+}
+
+async function subirFotos(p, files, tipo, giros = []) {
   // Solo hay un parte firmado: el nuevo sustituye al anterior, pero el anterior no se borra hasta tener el nuevo guardado
   const previos = tipo === "firmado" ? (p.fotos || []).filter((f) => f.tipo === "firmado") : [];
   if (tipo === "firmado") files = files.slice(0, 1);
   let n = 0;
   for (const file of files) {
     cargando(true, `Subiendo foto ${++n} de ${files.length}…`);
-    const blob = await comprimirImagen(file, 1600, 0.8);
+    const blob = await comprimirImagen(file, 1600, 0.8, giros[n - 1] || 0);
     const path = await api.subirArchivo(`${p.id}/foto_${Date.now()}_${n}.jpg`, blob, "image/jpeg");
     await api.anadirFoto(p.id, path, tipo);
   }
@@ -2243,12 +2270,15 @@ function sheetFotos(p) {
     tipo = b.dataset.v; $$("#tipoFoto button", s).forEach((x) => x.classList.toggle("on", x === b));
     $("#fGal", s).multiple = tipo !== "firmado";
   });
-  const alElegir = async (ev) => {
-    const files = [...ev.target.files]; if (!files.length) return;
-    cerrarSheet();
-    try { await subirFotos(p, files, tipo); toast("Fotos guardadas", "ok"); }
-    catch (e) { toast("Error subiendo fotos: " + e.message, "error"); }
-    finally { cargando(false); vistaParte(p.id); }
+  const alElegir = (ev) => {
+    let files = [...ev.target.files]; if (!files.length) return;
+    if (tipo === "firmado") files = files.slice(0, 1);
+    const nombres = { antes: "Fotos de antes", despues: "Fotos de después", firmado: "Parte firmado", otra: "Otras fotos" };
+    sheetPreviaFotos(nombres[tipo] || "Fotos", files, async (giros) => {
+      try { await subirFotos(p, files, tipo, giros); toast("Fotos guardadas", "ok"); }
+      catch (e) { toast("Error subiendo fotos: " + e.message, "error"); }
+      finally { cargando(false); vistaParte(p.id); }
+    });
   };
   $("#fCam", s).onchange = alElegir; $("#fGal", s).onchange = alElegir;
 }
@@ -2416,12 +2446,12 @@ function sheetFase(p, destino) {
       ${destino === "valorado" ? `<a class="btn ancho" href="#/lineas/${p.id}/valoracion">📋 ${(p.lineas_valoracion || []).length ? "Revisar" : "Meter"} códigos de la tarifa</a>
         <label class="precio">Importe valorado (€, sin IVA)<input type="number" step="0.01" inputmode="decimal" name="importe_valorado" value="${(p.lineas_valoracion || []).length ? totalesLineas(p.lineas_valoracion).base : (p.importe_valorado ?? "")}"></label>` : ""}
       ${destino === "autorizado" ? `<label class="precio">Importe autorizado (€)<input type="number" step="0.01" inputmode="decimal" name="importe_autorizado" value="${(p.lineas_autorizadas || []).length ? totalesLineas(p.lineas_autorizadas).base : (p.importe_autorizado ?? p.importe_valorado ?? "")}"></label>` : ""}
-      ${destino === "visitado" ? `<label class="btn ancho">${I.cam} Fotos de antes (opcional)<input type="file" accept="image/*" multiple hidden name="fotos" data-tipo="antes"></label><small class="suave" id="nFotos"></small>` : ""}
+      ${destino === "visitado" ? `<label class="btn ancho">${I.cam} Fotos de antes (opcional)<input type="file" accept="image/*" multiple hidden name="fotos" data-tipo="antes"></label><small class="suave" id="nFotos"></small><div id="pvFotos"></div>` : ""}
       ${destino === "realizado" ? `<label>Fecha en que se hizo el trabajo<input type="date" name="realizado_dia" value="${fechaPropuesta(p)}" max="${new Date().toLocaleDateString("sv-SE")}"></label>
         <small class="suave" style="margin-top:-.4em" id="nDia">${fechaPropuesta(p) !== hoyDia() ? "Propuesta: la fecha de su última cita. " : ""}Si añades la foto del parte firmado, se pone la fecha de la foto. Decide el mes de la facturación.</small>
         <a class="btn ancho" href="#/lineas/${p.id}/realizados">📋 ${(p.lineas_realizadas || []).length ? "Revisar" : "Anotar"} trabajos realizados (códigos)</a>
-        <label class="btn ancho primario">📄 Foto del parte firmado<input type="file" accept="image/*" capture="environment" hidden name="firmado"></label><small class="suave" id="nFirmado">${firmadoDe(p) ? "Ya hay un parte firmado; si haces otra foto se sustituye." : "Una sola foto. Irá la primera al enviar el trabajo terminado."}</small>
-        <label class="btn ancho">${I.cam} Fotos del trabajo terminado<input type="file" accept="image/*" multiple hidden name="fotos" data-tipo="despues"></label><small class="suave" id="nFotos"></small>
+        <label class="btn ancho primario">📄 Foto del parte firmado<input type="file" accept="image/*" capture="environment" hidden name="firmado"></label><small class="suave" id="nFirmado">${firmadoDe(p) ? "Ya hay un parte firmado; si haces otra foto se sustituye." : "Una sola foto. Irá la primera al enviar el trabajo terminado."}</small><div id="pvFirmado"></div>
+        <label class="btn ancho">${I.cam} Fotos del trabajo terminado<input type="file" accept="image/*" multiple hidden name="fotos" data-tipo="despues"></label><small class="suave" id="nFotos"></small><div id="pvFotos"></div>
         <div class="firma-caja"><div class="h3-fila"><b>Firma del cliente</b><button type="button" class="btn texto peq" id="limpiarFirma">Borrar</button></div>
           <canvas id="firma"></canvas><small class="suave">${p.firma_path ? "Ya hay una firma guardada; si firmas de nuevo se sustituye." : "Opcional. Pide al cliente que firme con el dedo."}</small></div>` : ""}
       <div class="pie-form">
@@ -2441,8 +2471,10 @@ function sheetFase(p, destino) {
     const hoy = new Date().toLocaleDateString("sv-SE");
     if (dia && dia <= hoy) { inDia.value = dia; $("#nDia", s).textContent = `📷 Fecha tomada ${origen} (${fFecha(dia + "T12:00:00")}). Cámbiala si no es correcta.`; }
   };
-  inFirmado?.addEventListener("change", () => { if (inFirmado.files.length) $("#nFirmado", s).textContent = "✅ Parte firmado listo para guardar"; fechaDesdeFotos(); });
-  inFotos?.addEventListener("change", () => { $("#nFotos", s).textContent = `${inFotos.files.length} foto(s) seleccionada(s)`; fechaDesdeFotos(); });
+  // Miniaturas con ↻ para enderezar antes de guardar
+  let pvFirmado = null, pvFotos = null;
+  inFirmado?.addEventListener("change", () => { if (inFirmado.files.length) $("#nFirmado", s).textContent = "✅ Parte firmado listo para guardar"; pvFirmado?.liberar(); pvFirmado = previaFotos($("#pvFirmado", s), [...inFirmado.files]); fechaDesdeFotos(); });
+  inFotos?.addEventListener("change", () => { $("#nFotos", s).textContent = `${inFotos.files.length} foto(s) seleccionada(s)`; pvFotos?.liberar(); pvFotos = previaFotos($("#pvFotos", s), [...inFotos.files]); fechaDesdeFotos(); });
   let firma = null;
   if (destino === "realizado") {
     firma = panelFirma($("#firma", s));
@@ -2469,8 +2501,8 @@ function sheetFase(p, destino) {
     cerrarSheet();
     try {
       await conCarga("Guardando…", async () => {
-        if (firmadoFile) await subirFotos(p, [firmadoFile], "firmado");
-        if (fotos.length) await subirFotos(p, fotos, inFotos.dataset.tipo);
+        if (firmadoFile) await subirFotos(p, [firmadoFile], "firmado", pvFirmado?.giros);
+        if (fotos.length) await subirFotos(p, fotos, inFotos.dataset.tipo, pvFotos?.giros);
         if (firmaBlob) cambios.firma_path = await api.subirArchivo(`${p.id}/firma.png`, firmaBlob, "image/png");
         cargando(true, "Guardando…");
         if (Object.keys(cambios).length) await api.actualizarParte(p.id, cambios);

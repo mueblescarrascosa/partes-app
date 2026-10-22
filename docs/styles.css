@@ -426,3 +426,8 @@ body.con-sel .lista { padding-bottom: 90px; }
 .cobertura-info { background: #fff7ed; border-color: #fdba74; color: #7c2d12; }
 .as-badge { background: #ffedd5; color: #9a3412; }
 .lim-badge { background: #ecfdf5; color: #065f46; }
+/* Vista previa de fotos antes de guardarlas (↻ para enderezar) */
+.previa-fotos{display:grid;grid-template-columns:repeat(auto-fill,minmax(96px,1fr));gap:.5em;margin:.5em 0 .3em}
+.previa-fotos figure{position:relative;margin:0;aspect-ratio:1;background:rgba(127,127,127,.15);border-radius:10px;overflow:hidden;display:flex;align-items:center;justify-content:center}
+.previa-fotos img{max-width:100%;max-height:100%;object-fit:contain;transition:transform .15s}
+.previa-fotos .girar{position:absolute;right:5px;bottom:5px;width:36px;height:36px;border-radius:50%;border:0;background:rgba(0,0,0,.65);color:#fff;font-size:20px;line-height:1;cursor:pointer}
