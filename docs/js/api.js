@@ -101,7 +101,11 @@ function crearApiSupabase() {
     },
     async aPapelera(id) { ok(await sb.from("partes").update({ borrado_at: new Date().toISOString() }).eq("id", id)); },
     async restaurarParte(id) { ok(await sb.from("partes").update({ borrado_at: null }).eq("id", id)); },
-    async editarEvento(id, cambios) { ok(await sb.from("eventos").update(cambios).eq("id", id)); },
+    // Sin permiso, Supabase no da error: simplemente no cambia nada. Por eso se comprueba que la línea ha cambiado.
+    async editarEvento(id, cambios) {
+      const r = ok(await sb.from("eventos").update(cambios).eq("id", id).select("id"));
+      if (!r.length) throw new Error("No se ha podido cambiar la línea del historial (¿tienes permiso?).");
+    },
     async _sinUso() {
     },
     async obtenerParte(id) {
@@ -149,7 +153,10 @@ function crearApiSupabase() {
     async anadirEvento(parte_id, estado, nota, created_at) {
       return ok(await sb.from("eventos").insert({ parte_id, estado, nota, ...(created_at ? { created_at } : {}) }).select().single());
     },
-    async borrarEvento(id) { ok(await sb.from("eventos").delete().eq("id", id)); },
+    async borrarEvento(id) {
+      const r = ok(await sb.from("eventos").delete().eq("id", id).select("id"));
+      if (!r.length) throw new Error("No se ha podido borrar la línea del historial (¿tienes permiso?).");
+    },
 
     async subirArchivo(path, blob, contentType) {
       // El lector no puede sobrescribir (tampoco lo necesita: sus fotos y bocetos tienen nombre único)

@@ -124,12 +124,29 @@ function cargando(on, texto = "Cargando…") {
   if (on) { c.querySelector("span").textContent = texto; c.classList.add("on"); } else c.classList.remove("on");
 }
 
+// Mensaje de error comprensible (sin conexión, contraseña incorrecta…) en lugar del texto técnico
+function mensajeError(e) {
+  const m = String(e?.message || e || "");
+  if (!navigator.onLine || /Failed to fetch|NetworkError|Load failed|ERR_INTERNET|network request failed/i.test(m)) return "Sin conexión: no se ha podido completar. Inténtalo de nuevo cuando tengas cobertura.";
+  if (/Invalid login credentials/i.test(m)) return "Email o contraseña incorrectos.";
+  if (/Email not confirmed/i.test(m)) return "Ese email aún no está confirmado.";
+  return m || "Error";
+}
 async function conCarga(texto, fn) {
   cargando(true, texto);
   try { return await fn(); }
-  catch (e) { console.error(e); toast(e.message || "Error", "error"); throw e; }
+  catch (e) {
+    const msg = mensajeError(e);
+    if (!/contraseña incorrectos|no está confirmado/.test(msg)) console.error(e);
+    toast(msg, "error");
+    if (e && typeof e === "object") e.avisado = true;   // ya se ha avisado en pantalla (ver unhandledrejection)
+    throw e;
+  }
   finally { cargando(false); }
 }
+// Un error que conCarga ya ha enseñado en pantalla no debe salir además como "Uncaught" en la consola
+// (muchos botones no lo recogen porque no hay nada más que hacer). Los demás errores se siguen viendo.
+window.addEventListener("unhandledrejection", (ev) => { if (ev.reason?.avisado) ev.preventDefault(); });
 
 // ------------------------------------------------------------------ Copyright y versión
 const pieCopyright = () => `<footer class="copyright">© ${new Date().getFullYear()} ${esc(CFG.AUTOR || "Alfonso Carrascosa Martínez")} · Todos los derechos reservados<br>${CFG.IDEA ? "Idea original: " + esc(CFG.IDEA) + "<br>" : ""}${CFG.HECHA_CON ? esc(CFG.HECHA_CON) + "<br>" : ""}Partes · versión ${esc(CFG.VERSION || "")}${CFG.FECHA_VERSION ? " (" + esc(CFG.FECHA_VERSION) + ")" : ""}</footer>`;
@@ -181,6 +198,7 @@ function vistaLogin() {
     <form id="fLogin" class="tarjeta">
       <label>Email<input type="email" name="email" autocomplete="username" required></label>
       <label>Contraseña<input type="password" name="password" autocomplete="current-password" required></label>
+      <p class="aviso-rojo" id="loginError" hidden></p>
       <button class="btn primario ancho" type="submit">Entrar</button>
       <button class="btn texto ancho" type="button" id="olvido">He olvidado la contraseña</button>
     </form>
@@ -189,14 +207,16 @@ function vistaLogin() {
   $("#fLogin").addEventListener("submit", async (e) => {
     e.preventDefault();
     const f = new FormData(e.target);
-    await conCarga("Entrando…", () => api.entrar(f.get("email"), f.get("password")));
+    const aviso = $("#loginError"); aviso.hidden = true;
+    try { await conCarga("Entrando…", () => api.entrar(f.get("email"), f.get("password"))); }
+    catch (err) { aviso.textContent = mensajeError(err); aviso.hidden = false; return; }
     S.yo = null; router();
 setTimeout(() => { try { sessionStorage.removeItem("pa_recarga"); } catch { /* nada */ } }, 8000);
   });
   $("#olvido").addEventListener("click", async () => {
     const email = $("#fLogin [name=email]").value;
     if (!email) return toast("Escribe tu email primero");
-    await conCarga("Enviando…", () => api.recuperar(email));
+    try { await conCarga("Enviando…", () => api.recuperar(email)); } catch { return; }
     toast("Te hemos enviado un email para cambiar la contraseña", "ok");
   });
 }
@@ -2551,18 +2571,25 @@ function sheetEvento(p, ev) {
     <form id="fEv" class="form">
       <label>Fecha y hora<input type="datetime-local" name="fecha" value="${toLocalInput(ev.created_at)}"></label>
       <label>Texto<textarea name="nota" rows="4">${esc(ev.nota || "")}</textarea></label>
+      <p class="aviso-rojo" id="evError" hidden></p>
       <div class="pie-form"><button type="button" class="btn peligro" id="borrarEv">Borrar</button><button class="btn primario">Guardar</button></div>
     </form>
     ${ev.estado ? '<p class="suave">Borrar esta línea no cambia la fase actual del parte. Para cambiar de fase toca el círculo de la fase.</p>' : ""}`);
+  // Si falla (p. ej. sin conexión), la ventana sigue abierta con lo escrito y un aviso, como al añadir una nota
+  const fallo = (err) => { const x = $("#evError", s); x.textContent = `${mensajeError(err)} La línea del historial no ha cambiado.`; x.hidden = false; };
   $("#fEv", s).addEventListener("submit", async (e) => {
     e.preventDefault();
     const f = Object.fromEntries(new FormData(e.target));
-    await conCarga("Guardando…", () => api.editarEvento(ev.id, { nota: f.nota.trim() || null, ...(f.fecha ? { created_at: new Date(f.fecha).toISOString() } : {}) }));
+    $("#evError", s).hidden = true;
+    try { await conCarga("Guardando…", () => api.editarEvento(ev.id, { nota: f.nota.trim() || null, ...(f.fecha ? { created_at: new Date(f.fecha).toISOString() } : {}) })); }
+    catch (err) { return fallo(err); }
     cerrarSheet(); toast("Guardado", "ok"); vistaParte(p.id);
   });
   $("#borrarEv", s).onclick = async () => {
     if (!confirm("¿Borrar esta línea del historial?")) return;
-    await conCarga("Borrando…", () => api.borrarEvento(ev.id));
+    $("#evError", s).hidden = true;
+    try { await conCarga("Borrando…", () => api.borrarEvento(ev.id)); }
+    catch (err) { return fallo(err); }
     cerrarSheet(); vistaParte(p.id);
   };
 }
