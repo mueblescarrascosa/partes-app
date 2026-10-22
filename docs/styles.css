@@ -431,3 +431,7 @@ body.con-sel .lista { padding-bottom: 90px; }
 .previa-fotos figure{position:relative;margin:0;aspect-ratio:1;background:rgba(127,127,127,.15);border-radius:10px;overflow:hidden;display:flex;align-items:center;justify-content:center}
 .previa-fotos img{max-width:100%;max-height:100%;object-fit:contain;transition:transform .15s}
 .previa-fotos .girar{position:absolute;right:5px;bottom:5px;width:36px;height:36px;border-radius:50%;border:0;background:rgba(0,0,0,.65);color:#fff;font-size:20px;line-height:1;cursor:pointer}
+/* Papelera: vaciar los de más de 90 días */
+.papelera-vaciar{padding:12px 12px 0}
+.vaciar-lista{max-height:40vh;overflow:auto;margin:.4em 0 .8em;padding-left:1.2em}
+.vaciar-lista li{margin:.35em 0}

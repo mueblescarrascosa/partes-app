@@ -2594,14 +2594,19 @@ function sheetEvento(p, ev) {
   };
 }
 
+const DIAS_PAPELERA = 90;               // "Vaciar" borra los que llevan más de 90 días en la papelera
+const DIAS_COPIA_ANTES_DE_VACIAR = 7;  // y avisa si la última copia completa (ZIP) tiene más de 7 días
+
 async function vistaPapelera() {
   let lista = [];
   try { lista = await conCarga("Cargando…", () => api.listarPapelera()); } catch { /* nada */ }
+  const viejos = lista.filter((p) => p.borrado_at && Date.now() - new Date(p.borrado_at) > DIAS_PAPELERA * 864e5);
   app.innerHTML = `
   <header class="barra">
     <button class="icono" id="volver" aria-label="Volver">${I.back}</button>
     <h1>Papelera <small class="sub">${lista.length}</small></h1><span></span>
   </header>
+  ${S.yo?.es_admin ? `<div class="papelera-vaciar"><button class="btn ancho" id="vaciar">🧹 Vaciar partes de más de ${DIAS_PAPELERA} días en la papelera (${viejos.length})</button></div>` : ""}
   <main class="lista">${lista.length ? lista.map((p) => `
     <article class="parte papel" style="--ase:${colorAseg(p.aseguradora)}">
       <div class="parte-top"><span class="aseg">${esc(p.aseguradora)}</span><span class="exp">${esc(p.expediente || "")}</span><small class="suave">borrado ${hace(p.borrado_at)}</small></div>
@@ -2620,6 +2625,53 @@ async function vistaPapelera() {
     if (!confirm("Se borrará para siempre, con sus fotos y notas. ¿Seguro?")) return;
     await conCarga("Borrando…", () => api.borrarParte(b.dataset.b));
     toast("Borrado definitivamente"); vistaPapelera();
+  });
+  $("#vaciar")?.addEventListener("click", () => vaciarPapelera(viejos));
+}
+
+// Vaciar a mano (nada automático) los partes que llevan más de DIAS_PAPELERA días en la papelera: enseña la lista,
+// avisa si la copia completa (ZIP) no es reciente y los borra uno a uno con el borrado seguro de borrarParte
+// (si fallan los archivos de un parte, ese parte no se borra y sigue en la papelera).
+function vaciarPapelera(viejos) {
+  if (!viejos.length) return toast(`No hay partes de más de ${DIAS_PAPELERA} días en la papelera`);
+  const ult = CFG.ULTIMA_COPIA_ARCHIVOS;
+  const dias = ult ? Math.floor((Date.now() - new Date(ult)) / 864e5) : null;
+  const sinCopia = dias == null || dias > DIAS_COPIA_ANTES_DE_VACIAR;
+  const n = viejos.length;
+  const s = abrirSheet(`
+    <h2>Vaciar la papelera</h2>
+    <p>Se borrarán <b>para siempre</b> ${n === 1 ? "este parte, que lleva" : `estos ${n} partes, que llevan`} más de ${DIAS_PAPELERA} días en la papelera, con todas sus fotos, documentos e informes:</p>
+    <ul class="vaciar-lista">${viejos.map((p) => `<li><b>${esc(p.aseguradora || "")} ${esc(p.expediente || "")}</b> · ${esc(p.nombre || "Sin nombre")}<br><small class="suave">En la papelera desde el ${fFecha(p.borrado_at)}</small></li>`).join("")}</ul>
+    ${sinCopia
+      ? `<p class="aviso-rojo">⚠️ ${ult ? `La última copia completa (ZIP) es de hace ${dias} días` : "Aún no se ha hecho ninguna copia completa (ZIP)"}: antes de borrar para siempre, haz una.</p>`
+      : `<p class="suave">Última copia completa (ZIP): ${fFecha(ult)}.</p>`}
+    <div class="lista-botones">
+      ${sinCopia ? '<button class="btn primario ancho" id="vCopia">🗂️ Hacer la copia completa primero</button>' : ""}
+      <button class="btn peligro ancho" id="vBorrar">${sinCopia ? "Borrar sin hacer copia" : `🗑 Borrar ${n === 1 ? "el parte" : `los ${n} partes`} para siempre`}</button>
+      <button class="btn texto ancho" data-cerrar>Cancelar</button>
+    </div>`);
+  $("#vCopia", s)?.addEventListener("click", async () => {
+    cerrarSheet();
+    await copiaCompleta();
+    if (location.hash === "#/papelera") vistaPapelera();   // vuelve con la fecha de copia al día
+  });
+  $("#vBorrar", s).addEventListener("click", async () => {
+    if (!confirm(`Se borrarán para siempre ${n} parte(s) con todas sus fotos, documentos e informes.\nNo se puede deshacer. ¿Seguro?`)) return;
+    cerrarSheet();
+    const fallos = [];
+    for (let i = 0; i < n; i++) {
+      cargando(true, `Borrando ${i + 1} de ${n}…`);
+      try { await api.borrarParte(viejos[i].id); }
+      catch (e) { fallos.push({ p: viejos[i], motivo: mensajeError(e) }); }
+    }
+    cargando(false);
+    await vistaPapelera();
+    if (!fallos.length) return toast(`${n === 1 ? "Parte borrado" : `${n} partes borrados`} para siempre`, "ok");
+    abrirSheet(`
+      <h2 style="color:#b91c1c">⚠️ No se han podido borrar todos</h2>
+      <p>Se han borrado ${n - fallos.length} de ${n}. ${fallos.length === 1 ? "Este sigue" : "Estos siguen"} en la papelera; puedes volver a intentarlo:</p>
+      <ul class="vaciar-lista">${fallos.map((f) => `<li><b>${esc(f.p.aseguradora || "")} ${esc(f.p.expediente || "")}</b> · ${esc(f.p.nombre || "Sin nombre")}<br><small class="suave">${esc(f.motivo)}</small></li>`).join("")}</ul>
+      <button class="btn primario ancho" data-cerrar>Entendido</button>`);
   });
 }
 
