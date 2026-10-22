@@ -194,7 +194,7 @@ Deno.serve(async (req) => {
   if (req.method !== "POST") return resp({ error: "Método no permitido" }, 405);
 
   try {
-    // Solo miembros del equipo pueden usar la IA (evita gasto por terceros)
+    // Solo miembros del equipo que pueden escribir usan la IA (evita gasto por terceros y por usuarios de solo lectura)
     const auth = req.headers.get("Authorization") ?? "";
     if (!auth.startsWith("Bearer ")) return resp({ error: "No autorizado" }, 401);
     const sb = createClient(
@@ -204,6 +204,8 @@ Deno.serve(async (req) => {
     );
     const { data: miembro, error: e1 } = await sb.rpc("es_miembro");
     if (e1 || !miembro) return resp({ error: "No autorizado" }, 401);
+    const { data: escribe, error: e2 } = await sb.rpc("puede_escribir");
+    if (e2 || !escribe) return resp({ error: "Tu usuario es de solo lectura" }, 403);
 
     const { data, mime, proveedor: forzar } = await req.json() as Entrada & { proveedor?: string };
     if (!data || !mime) return resp({ error: "Faltan datos del archivo" }, 400);
