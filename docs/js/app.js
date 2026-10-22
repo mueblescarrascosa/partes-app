@@ -2851,6 +2851,7 @@ async function enviarMensaje(p, precios, fotosSel) {
   };
 }
 
+const DIAS_ENLACE_PDF = 7;   // validez del enlace al PDF que se manda por WhatsApp (lleva datos personales)
 async function enviarPDF(pIn, precios) {
   cerrarSheet();
   let blob, nombre, p, enlace = null;
@@ -2859,9 +2860,12 @@ async function enviarPDF(pIn, precios) {
       const p = await api.obtenerParte(pIn.id);
       const { generarInforme } = await cargarPDF();
       const r = await generarInforme(p, api, S.miembros, { precios, iva: ivaDe(p) });
-      const path = await api.subirArchivo(`${p.id}/${r.nombre}`, r.blob, "application/pdf");
+      // Cada informe con nombre único: un enlace ya enviado enseña siempre la versión que se envió (se conservan todas).
+      // El PDF que se comparte o descarga mantiene su nombre de siempre (r.nombre).
+      const marca = new Date().toISOString().replace(/[-:]/g, "").replace("T", "_").slice(0, 15);
+      const path = await api.subirArchivo(`${p.id}/informe_${marca}_${r.nombre}`, r.blob, "application/pdf");
       await api.actualizarParte(p.id, { informe_path: path });
-      if (api.modo === "supabase") { try { enlace = await api.urlArchivo(path, 60 * 60 * 24 * 30); } catch { /* sin enlace */ } }
+      if (api.modo === "supabase") { try { enlace = await api.urlArchivo(path, 60 * 60 * 24 * DIAS_ENLACE_PDF); } catch { /* sin enlace */ } }
       return { ...r, p };
     }));
   } catch { return; }
@@ -2878,7 +2882,7 @@ async function enviarPDF(pIn, precios) {
     <p class="suave">${esc(nombre)}${precios ? "" : " · sin precios"}</p>
     <div class="lista-botones">
       ${puedeCompartir ? `<button class="btn primario grande" id="compartir" style="--c:#16a34a">${I.wa}<span><b>Enviar PDF por WhatsApp</b><small>Elige WhatsApp y luego ${esc(aQuien(quien))}</small></span></button>` : ""}
-      ${tel ? `<a class="btn grande" id="waEnlace" target="_blank" rel="noopener" href="${linkWhatsApp(tel, texto + (enlace ? "\n" + enlace : ""))}">${I.wa}<span><b>WhatsApp directo ${esc(aQuien(quien))}</b><small>${enlace ? "Mensaje con enlace al PDF (válido 30 días)" : "Abre el chat; adjunta el PDF descargado"}</small></span></a>` : ""}
+      ${tel ? `<a class="btn grande" id="waEnlace" target="_blank" rel="noopener" href="${linkWhatsApp(tel, texto + (enlace ? "\n" + enlace : ""))}">${I.wa}<span><b>WhatsApp directo ${esc(aQuien(quien))}</b><small>${enlace ? `Mensaje con enlace al PDF (válido ${DIAS_ENLACE_PDF} días)` : "Abre el chat; adjunta el PDF descargado"}</small></span></a>` : ""}
       <button class="btn grande" id="descargar">${I.pdf}<span><b>Descargar / ver PDF</b></span></button>
       <button class="btn texto ancho" data-cerrar>Cerrar</button>
     </div>
