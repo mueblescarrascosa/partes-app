@@ -35,6 +35,7 @@ async function cargarAjustes() {
     if (a.DIAS_COBRO) CFG.DIAS_COBRO = Number(a.DIAS_COBRO);
     if (a.IVA_FACTURA != null && a.IVA_FACTURA !== "") CFG.IVA_FACTURA = Number(a.IVA_FACTURA);
     if (a.ULTIMA_COPIA) CFG.ULTIMA_COPIA = a.ULTIMA_COPIA;
+    if (a.ULTIMA_COPIA_ARCHIVOS) CFG.ULTIMA_COPIA_ARCHIVOS = a.ULTIMA_COPIA_ARCHIVOS;
     ajustesCargados = true;
   } catch { /* se usan los valores de config.js */ }
 }
@@ -459,7 +460,11 @@ function datosResumen() {
       const ult = CFG.ULTIMA_COPIA || sessionGet("ultimaCopia");
       const dias = ult ? Math.floor((Date.now() - new Date(ult)) / 864e5) : null;
       const toca = dias == null || dias >= DIAS_COPIA;
-      return [{ accion: copiaSeguridad, t: `💾 Copia de seguridad: ${ult ? (dias === 0 ? "hecha hoy" : `última hace ${dias} día${dias === 1 ? "" : "s"}`) : "nunca hecha"}${toca ? " · pulsa para descargarla" : ""}`, n: toca ? 1 : 0, aviso: toca }];
+      const ultA = CFG.ULTIMA_COPIA_ARCHIVOS;
+      const diasA = ultA ? Math.floor((Date.now() - new Date(ultA)) / 864e5) : null;
+      const tocaA = diasA == null || diasA > DIAS_COPIA_ARCHIVOS;
+      return [{ accion: copiaSeguridad, t: `💾 Copia de seguridad: ${ult ? (dias === 0 ? "hecha hoy" : `última hace ${dias} día${dias === 1 ? "" : "s"}`) : "nunca hecha"}${toca ? " · pulsa para descargarla" : ""}`, n: toca ? 1 : 0, aviso: toca },
+        { accion: copiaCompleta, t: `🗂️ Copia completa con archivos (ZIP): ${ultA ? (diasA === 0 ? "hecha hoy" : `última hace ${diasA} día${diasA === 1 ? "" : "s"}`) : "nunca hecha"}${tocaA ? " · pulsa para hacerla (mejor desde el ordenador)" : ""}`, n: tocaA ? 1 : 0, aviso: tocaA }];
     })() : []),
     ...(verPrecios() && esAdmin() ? (() => {
       const f = datosFacturacion();
@@ -557,35 +562,40 @@ async function vistaAgenda() {
 }
 
 // ------------------------------------------------------------------ Copia de seguridad (Excel)
+// El libro de la copia (partes, líneas e historial): lo usan la copia en Excel y la copia completa en ZIP
+async function libroCopia({ partes, eventos }) {
+  await cargarXLSX();
+  const precios = verPrecios();
+  const exp = new Map(partes.map((p) => [p.id, p]));
+  const nombre = (uid) => S.miembros.find((m) => m.user_id === uid)?.nombre ?? "";
+  const hojaPartes = partes.map((p) => ({
+    Aseguradora: p.aseguradora, Expediente: p.expediente, "Nº encargo": p.num_encargo, "Nº siniestro": p.num_siniestro, Póliza: p.poliza,
+    Estado: estadoInfo(p.estado).nombre, "En papelera": p.borrado_at ? "Sí" : "", Repetido: p.repetido_de ? "Sí" : "",
+    Nombre: p.nombre, Teléfono: p.telefono, "Teléfono 2": p.telefono2, Perjudicado: p.perjudicado_nombre || "", "Tel. perjudicado": p.perjudicado_telefono || "", Dirección: p.direccion, CP: p.codigo_postal, Población: p.poblacion,
+    Provincia: p.provincia, Zona: zonaDe(p), Tipo: esConexion(p) ? "Conexión" : "Seguro", Avería: p.averia, Tramitador: p.tramitador_nombre, "Tel. tramitador": p.tramitador_telefono,
+    "Fecha encargo": p.fecha_encargo, Cita: p.fecha_cita ? fFechaHora(p.fecha_cita) : "", Asignado: nombre(p.asignado_a),
+    ...(precios ? { "Valorado (€)": p.importe_valorado, "Autorizado (€)": p.importe_autorizado } : {}),
+    Entrada: fFechaHora(p.created_at), "Último cambio": fFechaHora(p.updated_at), Días: diasParte(p),
+  }));
+  const hojaLineas = [];
+  for (const p of partes) for (const [tipo, ls] of [["Valoración", p.lineas_valoracion], ["Autorizado", p.lineas_autorizadas], ["Realizado", p.lineas_realizadas]])
+    for (const l of ls || []) hojaLineas.push({ Expediente: p.expediente, Cliente: p.nombre, Tipo: tipo, Código: l.codigo, Descripción: l.descripcion, Cantidad: Number(l.cantidad),
+      ...(precios ? { "Precio (€)": Number(l.precio), "Dto %": Number(l.dto) || 0, "Importe (€)": importeLinea(l) } : {}) });
+  const hojaHist = eventos.map((e) => ({ Expediente: exp.get(e.parte_id)?.expediente ?? "", Cliente: exp.get(e.parte_id)?.nombre ?? "",
+    Fecha: fFechaHora(e.created_at), Fase: e.estado ? estadoInfo(e.estado).nombre : "Nota", Nota: e.nota ?? "", Usuario: nombre(e.creado_por) }));
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(hojaPartes), "Partes");
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(hojaLineas.length ? hojaLineas : [{ Info: "Sin líneas" }]), "Líneas");
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(hojaHist.length ? hojaHist : [{ Info: "Sin historial" }]), "Historial");
+  return new Uint8Array(XLSX.write(wb, { bookType: "xlsx", type: "array" }));
+}
+const nombreCopia = (ext) => `copia_partes_${new Date().toISOString().slice(0, 10)}.${ext}`;
+
 async function copiaSeguridad() {
   try {
     await conCarga("Preparando copia…", async () => {
-      await cargarXLSX();
-      const { partes, eventos } = await api.exportarTodo();
-      const precios = verPrecios();
-      const exp = new Map(partes.map((p) => [p.id, p]));
-      const nombre = (uid) => S.miembros.find((m) => m.user_id === uid)?.nombre ?? "";
-      const hojaPartes = partes.map((p) => ({
-        Aseguradora: p.aseguradora, Expediente: p.expediente, "Nº encargo": p.num_encargo, "Nº siniestro": p.num_siniestro, Póliza: p.poliza,
-        Estado: estadoInfo(p.estado).nombre, "En papelera": p.borrado_at ? "Sí" : "", Repetido: p.repetido_de ? "Sí" : "",
-        Nombre: p.nombre, Teléfono: p.telefono, "Teléfono 2": p.telefono2, Perjudicado: p.perjudicado_nombre || "", "Tel. perjudicado": p.perjudicado_telefono || "", Dirección: p.direccion, CP: p.codigo_postal, Población: p.poblacion,
-        Provincia: p.provincia, Zona: zonaDe(p), Tipo: esConexion(p) ? "Conexión" : "Seguro", Avería: p.averia, Tramitador: p.tramitador_nombre, "Tel. tramitador": p.tramitador_telefono,
-        "Fecha encargo": p.fecha_encargo, Cita: p.fecha_cita ? fFechaHora(p.fecha_cita) : "", Asignado: nombre(p.asignado_a),
-        ...(precios ? { "Valorado (€)": p.importe_valorado, "Autorizado (€)": p.importe_autorizado } : {}),
-        Entrada: fFechaHora(p.created_at), "Último cambio": fFechaHora(p.updated_at), Días: diasParte(p),
-      }));
-      const hojaLineas = [];
-      for (const p of partes) for (const [tipo, ls] of [["Valoración", p.lineas_valoracion], ["Autorizado", p.lineas_autorizadas], ["Realizado", p.lineas_realizadas]])
-        for (const l of ls || []) hojaLineas.push({ Expediente: p.expediente, Cliente: p.nombre, Tipo: tipo, Código: l.codigo, Descripción: l.descripcion, Cantidad: Number(l.cantidad),
-          ...(precios ? { "Precio (€)": Number(l.precio), "Dto %": Number(l.dto) || 0, "Importe (€)": importeLinea(l) } : {}) });
-      const hojaHist = eventos.map((e) => ({ Expediente: exp.get(e.parte_id)?.expediente ?? "", Cliente: exp.get(e.parte_id)?.nombre ?? "",
-        Fecha: fFechaHora(e.created_at), Fase: e.estado ? estadoInfo(e.estado).nombre : "Nota", Nota: e.nota ?? "", Usuario: nombre(e.creado_por) }));
-      const wb = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(hojaPartes), "Partes");
-      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(hojaLineas.length ? hojaLineas : [{ Info: "Sin líneas" }]), "Líneas");
-      XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(hojaHist.length ? hojaHist : [{ Info: "Sin historial" }]), "Historial");
-      const out = XLSX.write(wb, { bookType: "xlsx", type: "array" });
-      descargar(new Blob([out], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }), `copia_partes_${new Date().toISOString().slice(0, 10)}.xlsx`);
+      const out = await libroCopia(await api.exportarTodo());
+      descargar(new Blob([out], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }), nombreCopia("xlsx"));
       const ahora = new Date().toISOString();
       sessionSet("ultimaCopia", ahora);
       CFG.ULTIMA_COPIA = ahora;
@@ -597,6 +607,141 @@ async function copiaSeguridad() {
     sheetResumen(false, true);
     toast("Copia descargada", "ok");
   } catch { /* conCarga avisa */ }
+}
+
+// ------------------------------------------------------------------ Copia completa (ZIP: Excel + todos los archivos)
+const DIAS_COPIA_ARCHIVOS = 30;   // la campana avisa si la última copia completa de archivos tiene más de 30 días
+const AVISO_TAMANO_COPIA = 300e6; // a partir de aquí, mejor desde el ordenador (el ZIP se monta en memoria)
+async function cargarFflate() {
+  if (window.fflate) return;
+  await new Promise((ok, ko) => {
+    const sc = document.createElement("script");
+    sc.src = "https://cdn.jsdelivr.net/npm/fflate@0.8.2/umd/index.js";
+    sc.integrity = "sha384-DT0Ls0mO7JmjTnT+oBuMhEJzYJO1zUqzuuMXNdnOmOQRIpN2BgSjvBV/j50NngIT";
+    sc.crossOrigin = "anonymous";
+    sc.onload = ok; sc.onerror = () => ko(new Error("No se pudo cargar el generador de ZIP (¿sin conexión?)"));
+    document.head.appendChild(sc);
+  });
+}
+const fTam = (b) => b >= 1e6 ? `${(b / 1e6).toLocaleString("es-ES", { maximumFractionDigits: 1 })} MB` : `${Math.max(1, Math.round(b / 1e3))} kB`;
+// Nombres de carpeta sin tildes ni caracteres raros, para que el ZIP se abra bien en cualquier ordenador
+const sinRaros = (t) => String(t ?? "").normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^\w .,()-]+/g, "_").replace(/\s+/g, " ").trim().slice(0, 50);
+
+async function copiaCompleta() {
+  let lista, datos;
+  try {
+    lista = await conCarga("Contando archivos…", () => api.listarArchivos());
+  } catch { return; }
+  const total = lista.reduce((a, x) => a + x.size, 0);
+  const movil = matchMedia("(pointer: coarse)").matches;
+  if (!confirm(`Se van a descargar ${lista.length} archivos (${fTam(total)}), más la copia en Excel, en un ZIP.\n`
+    + `Tarda unos minutos: no salgas de la app mientras tanto.`
+    + (total > AVISO_TAMANO_COPIA ? `\n\n⚠️ Es mucho para montarlo en ${movil ? "el móvil" : "el navegador"}: si puedes, hazlo desde el ordenador.` : "")
+    + `\n\n¿Empezar?`)) return;
+
+  const resultados = new Array(lista.length);
+  cargando(true, "Preparando la copia en Excel…");
+  try {
+    datos = await api.exportarTodo();
+    const xlsx = await libroCopia(datos);
+    // Descarga de 3 en 3 (con más, Supabase a veces responde "Too many connections"); cada archivo se intenta
+    // hasta 3 veces, esperando 1 y 3 segundos entre intentos, y se comprueba que pesa lo mismo que en Supabase
+    const ESPERAS = [0, 1000, 3000];
+    const uno = async (a) => {
+      let motivo = "";
+      for (const espera of ESPERAS) {
+        if (espera) await new Promise((r) => setTimeout(r, espera));
+        try {
+          const b = await api.descargarArchivo(a.path);
+          if (!b) throw new Error("vacío");
+          if (a.size && b.size !== a.size) throw new Error(`descarga cortada (${b.size} de ${a.size} bytes)`);
+          return { ok: true, datos: new Uint8Array(await b.arrayBuffer()) };
+        } catch (e) { motivo = e.message || "error"; }
+      }
+      return { ok: false, motivo };
+    };
+    let siguiente = 0, hechos = 0;
+    const trabajador = async () => {
+      while (siguiente < lista.length) {
+        const k = siguiente++;
+        resultados[k] = await uno(lista[k]);
+        cargando(true, `Descargando archivos: ${++hechos} de ${lista.length}…`);
+      }
+    };
+    cargando(true, `Descargando archivos: 0 de ${lista.length}…`);
+    await Promise.all([1, 2, 3].map(trabajador));
+
+    cargando(true, "Montando el ZIP…");
+    await cargarFflate();
+    await new Promise((r) => setTimeout(r, 50));   // que se vea el mensaje antes del trabajo pesado
+    const partes = new Map(datos.partes.map((p) => [p.id, p]));
+    const fotoDe = new Map((datos.fotos || []).map((f) => [f.path, f]));
+    const carpetaDe = (id) => {
+      const p = partes.get(id);
+      if (!p) return `sin_parte_${sinRaros(id).slice(0, 8)}`;
+      return `${p.borrado_at ? "PAPELERA_" : ""}${[p.aseguradora, p.expediente, p.nombre].map(sinRaros).filter(Boolean).join("_")}_${id.slice(0, 8)}`;
+    };
+    const TIPOS = { antes: "Foto antes", despues: "Foto después", firmado: "Parte firmado", boceto: "Boceto", otra: "Otra foto" };
+    const queEs = (ruta, p) => {
+      const nombre = ruta.split("/").pop(), f = fotoDe.get(ruta);
+      if (f) return TIPOS[f.tipo] || "Foto";
+      if (p?.documento_path === ruta) return "Documento original";
+      if (p?.firma_path === ruta) return "Firma del cliente";
+      if (/^documento/i.test(nombre)) return "Documento anterior";
+      if (/\.pdf$/i.test(nombre)) return "Informe PDF";
+      return "Otro";
+    };
+    const zip = {}, filas = [], fallos = [];
+    lista.forEach((a, k) => {
+      const [id, ...resto] = a.path.split("/");
+      const carpeta = resto.length ? carpetaDe(id) : "", nombre = resto.length ? resto.join("/") : id;
+      const r = resultados[k];
+      if (r.ok) zip[`archivos/${carpeta ? carpeta + "/" : ""}${nombre}`] = [r.datos, { level: 0 }];   // fotos y PDF ya van comprimidos
+      else fallos.push({ ruta: a.path, motivo: r.motivo });
+      filas.push([carpeta, nombre, queEs(a.path, partes.get(id)), (a.size / 1e3).toLocaleString("es-ES", { maximumFractionDigits: 0 }), r.ok ? "OK" : `FALLO: ${r.motivo}`, a.path]);
+    });
+    const hoy = new Date();
+    const csv = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+    const indice = "﻿" + [["Carpeta", "Archivo", "Qué es", "Tamaño (kB)", "Estado", "Ruta en Supabase"], ...filas].map((f) => f.map(csv).join(";")).join("\r\n");
+    const okN = lista.length - fallos.length, okBytes = lista.reduce((s, a, k) => s + (resultados[k].ok ? a.size : 0), 0);
+    const leeme = "﻿" + [
+      `COPIA COMPLETA · Partes · ${fFechaHora(hoy.toISOString())}`, "",
+      fallos.length
+        ? `⚠️ COPIA INCOMPLETA: ${fallos.length} de ${lista.length} archivos NO se han podido descargar (ver la lista al final y la columna Estado de INDICE.csv). Repite la copia: suele ser la conexión o que Supabase estaba saturado en ese momento.`
+        : `✅ Copia completa: ${lista.length} de ${lista.length} archivos descargados y comprobados.`,
+      "",
+      `Archivos en el ZIP: ${okN} (${fTam(okBytes)}) de ${lista.length} (${fTam(total)}).`,
+      `Partes: ${datos.partes.length} (${datos.partes.filter((p) => p.borrado_at).length} en la papelera).`, "",
+      "Contenido:",
+      `- ${nombreCopia("xlsx")}: la copia en Excel de siempre (partes, líneas e historial).`,
+      "- INDICE.csv: una fila por archivo, con lo que es y si se ha descargado bien (se abre con Excel).",
+      "- archivos/: una carpeta por parte, con nombre aseguradora_expediente_cliente_código.",
+      "  Las que empiezan por PAPELERA_ son partes que están en la papelera.",
+      ...(fallos.length ? ["", "ARCHIVOS QUE FALTAN:", ...fallos.map((f) => `- ${f.ruta}: ${f.motivo}`)] : []),
+    ].join("\r\n");
+    zip["LEEME.txt"] = [fflate.strToU8(leeme), { level: 6 }];
+    zip["INDICE.csv"] = [fflate.strToU8(indice), { level: 6 }];
+    zip[nombreCopia("xlsx")] = [xlsx, { level: 0 }];   // un .xlsx ya es un ZIP
+    const nombreZip = `copia_completa_${hoy.toISOString().slice(0, 10)}${fallos.length ? `_INCOMPLETA_${fallos.length}_fallos` : ""}.zip`;
+    descargar(new Blob([fflate.zipSync(zip)], { type: "application/zip" }), nombreZip);
+
+    // La copia en Excel de dentro siempre está completa; la de archivos solo cuenta si no ha fallado ninguno
+    const ahora = hoy.toISOString();
+    sessionSet("ultimaCopia", ahora); CFG.ULTIMA_COPIA = ahora;
+    if (!fallos.length) CFG.ULTIMA_COPIA_ARCHIVOS = ahora;
+    try { const a = await api.leerAjustes(); await api.guardarAjustes({ ...a, ULTIMA_COPIA: ahora, ...(fallos.length ? {} : { ULTIMA_COPIA_ARCHIVOS: ahora }) }); } catch { /* no pasa nada */ }
+    cargando(false);
+    sheetResumen(false, true);
+    if (!fallos.length) { toast(`✅ Copia completa: ${lista.length} archivos (${fTam(total)}) + Excel`, "ok"); return; }
+    abrirSheet(`
+      <h2 style="color:#b91c1c">⚠️ Copia incompleta</h2>
+      <p>No se han podido descargar <b>${fallos.length}</b> de ${lista.length} archivos. El ZIP se ha guardado como <b>${esc(nombreZip)}</b>; en <b>LEEME.txt</b> e <b>INDICE.csv</b> están marcados los que faltan.</p>
+      <p><b>Repite la copia</b> para tener una completa. Suele ser la conexión o que Supabase estaba saturado en ese momento.</p>
+      <ul class="suave" style="max-height:40vh;overflow:auto">${fallos.map((f) => `<li>${esc(f.ruta)} — ${esc(f.motivo)}</li>`).join("")}</ul>
+      <button class="btn primario ancho" data-cerrar>Entendido</button>`);
+  } catch (e) {
+    console.error(e); toast("No se pudo hacer la copia: " + (e.message || "error"), "error");
+  } finally { cargando(false); }
 }
 
 // ------------------------------------------------------------------ Gasto de la IA
@@ -2991,6 +3136,8 @@ async function vistaAjustes() {
       <h3>Copia de seguridad</h3>
       <button type="button" class="btn ancho" id="btnCopia">💾 Descargar copia en Excel</button>
       <p class="suave">Todos los partes (también los de la papelera), las líneas de valoración y el historial. ${CFG.ULTIMA_COPIA || sessionGet("ultimaCopia") ? "Última copia: " + fFecha(CFG.ULTIMA_COPIA || sessionGet("ultimaCopia")) + "." : "Aún no se ha descargado ninguna."} Hazla una vez a la semana: si pasan ${DIAS_COPIA} días, la campana 🔔 te lo recuerda.</p>
+      <button type="button" class="btn ancho" id="btnCopiaZip">🗂️ Copia completa (datos y archivos, ZIP)</button>
+      <p class="suave">La copia en Excel más todas las fotos, documentos, firmas y PDF, en una carpeta por parte, con un índice que dice si cada archivo se ha descargado bien. Mejor desde el ordenador. ${CFG.ULTIMA_COPIA_ARCHIVOS ? "Última copia completa: " + fFecha(CFG.ULTIMA_COPIA_ARCHIVOS) + "." : "Aún no se ha hecho ninguna."} Si pasan más de ${DIAS_COPIA_ARCHIVOS} días, la campana 🔔 te lo recuerda.</p>
     </section>
     <section class="tarjeta">
       <h3>Zonas</h3>
@@ -3044,12 +3191,14 @@ async function vistaAjustes() {
     };
     if (!datos.ASEGURADORAS.includes("Otra")) datos.ASEGURADORAS.push("Otra");
     if (CFG.ULTIMA_COPIA) datos.ULTIMA_COPIA = CFG.ULTIMA_COPIA;
+    if (CFG.ULTIMA_COPIA_ARCHIVOS) datos.ULTIMA_COPIA_ARCHIVOS = CFG.ULTIMA_COPIA_ARCHIVOS;
     await conCarga("Guardando…", () => api.guardarAjustes(datos));
     ajustesCargados = false; await cargarAjustes();
     toast("Ajustes guardados", "ok");
   });
   $("#nuevoUsuario").onclick = sheetNuevoUsuario;
   $("#btnCopia").onclick = copiaSeguridad;
+  $("#btnCopiaZip").onclick = copiaCompleta;
   pintarUsoIA();
   pintarEspacio();
   pintarUsuarios();

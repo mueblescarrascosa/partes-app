@@ -65,11 +65,35 @@ function crearApiSupabase() {
     },
     async usoAlmacenamiento() { const { data, error } = await sb.rpc("uso_almacenamiento"); if (error) throw error; return data; },
     async exportarTodo() {
-      const [partes, eventos] = await Promise.all([
+      const [partes, eventos, fotos] = await Promise.all([
         leerTodo(() => sb.from("partes").select("*")),
         leerTodo(() => sb.from("eventos").select("*")),
+        leerTodo(() => sb.from("fotos").select("*")),
       ]);
-      return { partes: partes.sort(porFecha("created_at")), eventos: eventos.sort(porFecha("created_at")) };
+      return { partes: partes.sort(porFecha("created_at")), eventos: eventos.sort(porFecha("created_at")), fotos: fotos.sort(porFecha("created_at")) };
+    },
+    // Todos los archivos del bucket, carpeta a carpeta y en bloques: [{ path, size }]. Si algo no se puede listar, error
+    // (una copia con la lista incompleta parecería buena sin serlo).
+    async listarArchivos() {
+      const listar = async (carpeta) => {
+        const todo = [];
+        for (let offset = 0; ; offset += TAM_BLOQUE) {
+          const { data, error } = await sb.storage.from(BUCKET).list(carpeta, { limit: TAM_BLOQUE, offset });
+          if (error) throw new Error(`No se pudo listar la carpeta "${carpeta || "raíz"}": ${error.message}`);
+          todo.push(...data);
+          if (data.length < TAM_BLOQUE) return todo;
+        }
+      };
+      const archivos = [];
+      const recorrer = async (carpeta) => {
+        for (const f of await listar(carpeta)) {
+          const ruta = carpeta ? `${carpeta}/${f.name}` : f.name;
+          if (f.id == null) await recorrer(ruta);   // subcarpeta
+          else archivos.push({ path: ruta, size: Number(f.metadata?.size) || 0 });
+        }
+      };
+      await recorrer("");
+      return archivos;
     },
     async listarPapelera() {
       const r = await leerTodo(() => sb.from("partes").select("id,aseguradora,expediente,nombre,poblacion,estado,borrado_at").not("borrado_at", "is", null));
@@ -216,7 +240,14 @@ function crearApiDemo() {
     async miembros() { return [YO, { user_id: "demo2", nombre: "Técnico 2" }]; },
     async listarPartes() { return db.partes.filter((p) => !p.borrado_at).sort((a, b) => b.updated_at.localeCompare(a.updated_at)); },
     async listarPapelera() { return db.partes.filter((p) => p.borrado_at); },
-    async exportarTodo() { return { partes: db.partes, eventos: db.eventos }; },
+    async exportarTodo() { return { partes: db.partes, eventos: db.eventos, fotos: db.fotos }; },
+    // Tamaño a partir del dataURL: base64 ocupa 4/3, menos el relleno "="
+    async listarArchivos() {
+      return [...archivos.entries()].map(([path, u]) => {
+        const b64 = u.slice(u.indexOf(",") + 1);
+        return { path, size: (b64.length * 3) / 4 - (b64.endsWith("==") ? 2 : b64.endsWith("=") ? 1 : 0) };
+      });
+    },
     async usoAlmacenamiento() { return { archivos_bytes: 312e6, archivos_n: 1040, bd_bytes: 24e6 }; },
     async usoIA() { return (db.usoIA ??= [
       { created_at: new Date().toISOString(), proveedor: "anthropic", modelo: "claude-sonnet-4-5", tokens_in: 4100, tokens_out: 380, coste_usd: 0.0180 },
