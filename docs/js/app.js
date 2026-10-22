@@ -800,6 +800,8 @@ async function cargarXLSX() {
   await new Promise((ok, ko) => {
     const sc = document.createElement("script");
     sc.src = "https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js";
+    sc.integrity = "sha384-vtjasyidUo0kW94K5MXDXntzOJpQgBKXmE7e2Ga4LG0skTTLeBi97eFAXsqewJjw";
+    sc.crossOrigin = "anonymous";
     sc.onload = ok; sc.onerror = () => ko(new Error("No se pudo cargar el generador de Excel (¿sin conexión?)"));
     document.head.appendChild(sc);
   });
