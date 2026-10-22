@@ -39,7 +39,6 @@ h3 { font-size: 15px; margin-bottom: 8px; color: var(--muted); text-transform: u
 .chip.activo { background: var(--c, #0f172a); border-color: var(--c, #0f172a); color: #fff; }
 .chip.activo b { background: rgba(255,255,255,.25); }
 @media (prefers-color-scheme: dark) { .chip.activo:not([style]) { background: #e2e8f0; color: #0f172a; } }
-.solo-mios { display: flex; justify-content: flex-start; font-weight: 500; gap: 8px; align-items: center; font-size: 14px; color: var(--muted); padding: 4px 16px 0; }
 
 /* Lista */
 .lista { padding: 8px 12px 110px; display: grid; gap: 10px; }
@@ -49,7 +48,7 @@ h3 { font-size: 15px; margin-bottom: 8px; color: var(--muted); text-transform: u
 .parte-top { display: flex; align-items: center; gap: 8px; font-size: 13px; }
 .aseg { font-weight: 700; color: var(--ase); }
 .exp { color: var(--muted); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.estado { background: color-mix(in srgb, var(--c) 14%, transparent); color: var(--c); font-weight: 700; padding: 2px 9px; border-radius: 999px; font-size: 12px; }
+.estado { background: var(--c); color: #fff; font-weight: 700; padding: 2px 9px; border-radius: 999px; font-size: 12px; white-space: nowrap; }
 .parte-nombre { font-weight: 700; font-size: 17px; margin-top: 4px; }
 .parte-dir { color: var(--muted); font-size: 14px; }
 .parte-averia { font-size: 14px; margin-top: 4px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
@@ -223,9 +222,9 @@ h4.cat { margin: 14px 4px 2px; font-size: 12px; text-transform: uppercase; color
 .recorte-caja i[data-h=sw] { left: -6px; bottom: -6px; border-right: 0; border-top: 0; cursor: nesw-resize; }
 .recorte-caja i[data-h=se] { right: -6px; bottom: -6px; border-left: 0; border-top: 0; cursor: nwse-resize; }
 .recorte-pie { display: grid; grid-template-columns: 1fr 1fr 1.4fr; gap: 8px; padding: 10px 12px calc(12px + var(--safe-b)); background: #0f172a; }
-.filtros { display: flex; gap: 8px; align-items: center; padding: 4px 12px 0; flex-wrap: wrap; }
-.filtros .solo-mios { padding: 0; }
-.filtros select { width: auto; flex: 1; min-width: 130px; padding: 7px 8px; font-size: 14px; }
+.filtros { display: flex; gap: 6px; align-items: center; padding: 4px 12px 0; }
+.filtros select { width: auto; flex: 1; min-width: 0; padding: 7px 6px; font-size: 14px; }
+.filtros .icono-txt { flex: none; min-width: 40px; padding-left: 8px; padding-right: 8px; font-size: 16px; }
 .editar-ev { position: absolute; top: 2px; right: 0; width: 30px; height: 30px; border: 0; background: transparent; color: var(--muted); display: grid; place-items: center; cursor: pointer; }
 .zona-borrar { margin: 20px 12px 0; text-align: center; }
 .zona-borrar .suave { margin-top: 6px; }
@@ -435,3 +434,19 @@ body.con-sel .lista { padding-bottom: 90px; }
 .papelera-vaciar{padding:12px 12px 0}
 .vaciar-lista{max-height:40vh;overflow:auto;margin:.4em 0 .8em;padding-left:1.2em}
 .vaciar-lista li{margin:.35em 0}
+/* Lista: línea de resultado, encabezados por fase y vista compacta */
+.res-lista { padding: 6px 14px 0; font-size: 13px; color: var(--muted); }
+.res-lista:empty { display: none; }
+.grupo-fase { margin: 8px 2px -2px; font-size: 14px; color: var(--c); display: flex; align-items: center; gap: 8px; text-transform: uppercase; letter-spacing: .03em; }
+.grupo-fase b { background: var(--c); color: #fff; border-radius: 999px; padding: 0 8px; font-size: 12px; }
+.lista:has(.fila) { gap: 6px; }
+.parte.fila { display: flex; align-items: center; gap: 10px; padding: 9px 12px; }
+.parte.fila .estado { flex: none; min-width: 84px; text-align: center; }
+.fila-txt { flex: 1; min-width: 0; display: grid; }
+.fila-txt b, .fila-txt small { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.fila-txt small { color: var(--muted); font-size: 12px; }
+.fila-cita { flex: none; color: var(--muted); font-size: 12px; }
+@media (max-width: 380px) { .fila-cita { display: none; } }
+/* Bocetos y fotos: el texto de "vacío" ocupa todo el ancho, no una columna */
+.fotos > p { grid-column: 1 / -1; margin: 0; }
+.fase-punto { flex: none; width: 10px; height: 10px; border-radius: 50%; background: var(--c); }

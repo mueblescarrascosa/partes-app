@@ -42,15 +42,21 @@ async function cargarAjustes() {
 const app = $("#app");
 const S = {
   yo: null, miembros: [], partes: [],
-  filtro: sessionGet("filtro") ?? "activos", busqueda: "", soloMios: sessionGet("soloMios") === "1",
+  filtro: sessionGet("filtro") ?? "activos", busqueda: "", vista: sessionGet("vista") === "compacta" ? "compacta" : "tarjetas",
   orden: sessionGet("orden") ?? "recientes", filtroAseg: sessionGet("filtroAseg") ?? "", filtroZona: sessionGet("filtroZona") ?? "", fx: (() => { try { return JSON.parse(sessionGet("fx") || "{}"); } catch { return {}; } })(),
   borrador: null, // parte nuevo pendiente de guardar {datos, archivo, mime}
+  scroll: {},      // posición de cada vista al salir de ella, para volver al mismo sitio
+  volverA: "/",    // a dónde lleva "volver" desde la ficha (lista, facturación, agenda…)
+  navIds: [],      // orden de la lista de la que se abrió la ficha (para "‹ Anterior · Siguiente ›")
 };
 
 // Usuarios de solo lectura (miembros.solo_lectura, nunca un admin): ven los partes sin importes (lo bloquea Supabase:
 // leen de las vistas partes_lector y eventos_lector) y solo pueden añadir notas, fotos y bocetos y borrar los suyos.
 // En el modo demo se simula desde el menú de usuario.
 const esLector = () => api.modo !== "supabase" ? sessionGet("demoLector") === "1" : !!(S.yo?.solo_lectura && !S.yo?.es_admin);
+// Repartir partes entre técnicos ("Asignado"): oculto mientras todo lo lleva una sola persona.
+// El dato se sigue guardando (al crear un parte se asigna a quien lo crea); con true vuelve a verse y a filtrarse.
+const USAR_ASIGNADO = false;
 const RUTAS_ESCRITURA = ["nuevo", "editar", "lineas", "lote", "revision", "papelera"];
 // Usuarios sin permiso de precios: la app no les muestra importes (solo se oculta en pantalla; a los lectores, además, Supabase no se los da).
 const verPrecios = () => !esLector() && (api.modo !== "supabase" ? sessionGet("demoSinPrecios") !== "1" : (S.yo?.es_admin || S.yo?.ver_precios !== false));
@@ -170,6 +176,11 @@ async function router() {
   document.body.classList.toggle("solo-lectura", esLector());
   const [, ruta, id] = h.split("/");
   if (esLector() && RUTAS_ESCRITURA.includes(ruta)) { location.hash = "/"; return; }
+  // Se apunta dónde estabas en la vista que dejas, y de dónde vienes al abrir una ficha
+  const antes = document.body.dataset.vista;
+  if (antes) S.scroll[antes] = window.scrollY;
+  if (ruta === "parte" && ["lista", "facturacion", "agenda", "revision"].includes(antes)) S.volverA = antes === "lista" ? "/" : "/" + antes;
+  if (ruta === "parte" && antes === "agenda") S.navIds = [];
   document.body.dataset.vista = ruta || "lista";
   window.scrollTo(0, 0);
   if (!ruta) return vistaLista();
@@ -249,21 +260,22 @@ async function vistaLista() {
   <div class="chips" id="chips"></div>
   <div class="chips zonas" id="chipsZona"></div>
   <div class="filtros">
-    <label class="solo-mios"><input type="checkbox" id="soloMios" ${S.soloMios ? "checked" : ""}> Solo míos</label>
     <select id="fAseg"><option value="">Todas las aseguradoras</option>${[...new Set(S.partes.map((p) => p.aseguradora).concat(CFG.ASEGURADORAS))].filter((a) => a && a !== "Otra").map((a) => `<option ${a === S.filtroAseg ? "selected" : ""}>${esc(a)}</option>`).join("")}</select>
     <select id="orden">
-      ${[["recientes", "Últimos movidos"], ["antiguos", "Más días primero"], ["cita", "Próxima cita"], ["nuevos", "Últimos entrados"]].map(([v, t]) => `<option value="${v}" ${S.orden === v ? "selected" : ""}>${t}</option>`).join("")}
+      ${[["fase", "Por fase"], ["recientes", "Últimos movidos"], ["antiguos", "Más días primero"], ["cita", "Próxima cita"], ["nuevos", "Últimos entrados"]].map(([v, t]) => `<option value="${v}" ${S.orden === v ? "selected" : ""}>${t}</option>`).join("")}
     </select>
-    <button class="btn peq" id="btnFiltros">⚙️ Más filtros<b id="nFiltros"></b></button>
-    ${esLector() ? "" : '<button class="btn peq" id="btnSel" title="O mantén pulsado un parte">☑ Seleccionar</button>'}
+    <button class="btn peq icono-txt" id="btnVista" title="Cambiar entre tarjetas y lista compacta" aria-label="Cambiar vista">${S.vista === "compacta" ? "▤" : "☰"}</button>
+    <button class="btn peq icono-txt" id="btnFiltros" title="Más filtros" aria-label="Más filtros">⚙️<b id="nFiltros"></b></button>
+    ${esLector() ? "" : '<button class="btn peq icono-txt" id="btnSel" title="Seleccionar varios (o mantén pulsado un parte)" aria-label="Seleccionar varios">☑</button>'}
   </div>
+  <div class="res-lista" id="resLista"></div>
   <div class="filtros-activos" id="fActivos"></div>
   <div id="avisoLote"></div>
   <main id="lista" class="lista"><div class="vacio">Cargando…</div></main>
   ${esLector() ? "" : `<button class="fab" id="nuevo" aria-label="Nuevo parte">${I.plus}</button>`}`;
 
   $("#busca").addEventListener("input", (e) => { S.busqueda = e.target.value; pintarLista(); });
-  $("#soloMios").addEventListener("change", (e) => { S.soloMios = e.target.checked; sessionSet("soloMios", S.soloMios ? "1" : "0"); pintarLista(); });
+  $("#btnVista").addEventListener("click", () => { S.vista = S.vista === "compacta" ? "tarjetas" : "compacta"; sessionSet("vista", S.vista); $("#btnVista").textContent = S.vista === "compacta" ? "▤" : "☰"; pintarLista(); });
   $("#fAseg").addEventListener("change", (e) => { S.filtroAseg = e.target.value; sessionSet("filtroAseg", S.filtroAseg); pintarLista(); });
   $("#orden").addEventListener("change", (e) => { S.orden = e.target.value; sessionSet("orden", S.orden); pintarLista(); });
   $("#btnFiltros").addEventListener("click", sheetFiltros);
@@ -275,6 +287,7 @@ async function vistaLista() {
   $("#btnInstalar")?.addEventListener("click", instalarApp);
   avisoLotePendiente();
   await cargarPartes();
+  if (S.scroll.lista) window.scrollTo(0, S.scroll.lista);   // al volver de una ficha, donde estabas
   if (S.saltarResumen) S.saltarResumen = false; else sheetResumen(false);
 }
 
@@ -287,7 +300,6 @@ async function cargarPartes() {
 function pintarLista() {
   const q = S.busqueda.trim().toLowerCase();
   let base = S.partes;
-  if (S.soloMios) base = base.filter((p) => p.asignado_a === S.yo.user_id);
   if (S.filtroAseg) base = base.filter((p) => p.aseguradora === S.filtroAseg);
   const baseSinZona = base;
   if (S.filtroZona) base = base.filter((p) => (zonaDe(p) || "-") === S.filtroZona);
@@ -324,15 +336,27 @@ function pintarLista() {
     nuevos: (a, b) => (b.created_at || "").localeCompare(a.created_at || ""),
     antiguos: (a, b) => diasParte(b) - diasParte(a),
     cita: (a, b) => (a.fecha_cita ? 0 : 1) - (b.fecha_cita ? 0 : 1) || (a.fecha_cita || "").localeCompare(b.fecha_cita || ""),
+    // Por fase: recibido → … → realizado y, dentro de cada fase, los que más días llevan primero
+    fase: (a, b) => idxEstado(a.estado) - idxEstado(b.estado) || diasParte(b) - diasParte(a),
   };
   lista = [...lista].sort(ordenes[S.orden] || ordenes.recientes);
+  // Orden de la lista para "‹ Anterior · Siguiente ›" en la ficha
+  S.navIds = lista.map((p) => p.id);
+  const nombreOrden = { fase: "por fase", recientes: "últimos movidos", antiguos: "más días primero", cita: "próxima cita", nuevos: "últimos entrados" };
+  $("#resLista").textContent = lista.length ? `${lista.length} ${lista.length === 1 ? "parte" : "partes"} · ${nombreOrden[S.orden] || nombreOrden.recientes}` : "";
 
   const cont = $("#lista");
   if (!lista.length) {
     cont.innerHTML = `<div class="vacio">${S.partes.length ? "No hay partes con este filtro." : esLector() ? "Aún no hay partes." : "Aún no hay partes.<br>Pulsa <b>+</b> para escanear el primero."}</div>`;
     return;
   }
-  cont.innerHTML = lista.map(tarjetaParte).join("");
+  const pinta = S.vista === "compacta" ? filaParte : tarjetaParte;
+  // Ordenado por fase: un encabezado al empezar cada fase
+  cont.innerHTML = lista.map((p, i) => {
+    if (S.orden !== "fase" || (i && lista[i - 1].estado === p.estado)) return pinta(p);
+    const e = estadoInfo(p.estado);
+    return `<h4 class="grupo-fase" style="--c:${e.color}">${e.nombre} <b>${lista.filter((x) => x.estado === p.estado).length}</b></h4>` + pinta(p);
+  }).join("");
   const porId = (id) => S.partes.find((x) => x.id === id);
   $$(".parte", cont).forEach((el) => {
     let t = null, largo = false;
@@ -373,8 +397,8 @@ const inicioDia = (d = new Date()) => { const x = new Date(d); x.setHours(0, 0, 
 const FILTROS_EXTRA = {
   tipo: { t: "Tipo", op: () => [["siniestro", "Encargos del seguro"], ["conexion", "Conexión (presupuesto particular)"]],
     fn: (p, v) => (v === "conexion" ? esConexion(p) : !esConexion(p)) },
-  tecnico: { t: "Técnico", op: () => [["-", "Sin asignar"], ...S.miembros.map((m) => [m.user_id, m.nombre])],
-    fn: (p, v) => (v === "-" ? !p.asignado_a : p.asignado_a === v) },
+  ...(USAR_ASIGNADO ? { tecnico: { t: "Técnico", op: () => [["-", "Sin asignar"], ...S.miembros.map((m) => [m.user_id, m.nombre])],
+    fn: (p, v) => (v === "-" ? !p.asignado_a : p.asignado_a === v) } } : {}),
   dias: { t: "Antigüedad", op: () => [["7", "Más de 7 días"], ["15", "Más de 15 días"], ["30", "Más de 30 días"], ["60", "Más de 60 días (atascados)"]],
     fn: (p, v) => diasParte(p) > Number(v) },
   entrada: { t: "Entrada", op: () => [["hoy", "Hoy"], ["7", "Últimos 7 días"], ["mes", "Este mes"], ["mesant", "Mes pasado"]],
@@ -1236,9 +1260,22 @@ function avisoCobertura(p) {
   return `<div class="aviso cobertura-info">🧰 ${t.join("<br>")}</div>`;
 }
 
+// Vista compacta: una línea por parte (fase, nombre, población, días y cita), para ver muchos de un vistazo
+function filaParte(p) {
+  const e = estadoInfo(p.estado);
+  return `
+  <article class="parte fila ${S.sel?.has(p.id) ? "elegido" : ""}" data-id="${p.id}" style="--ase:${colorAseg(p.aseguradora)}">
+    ${S.sel ? `<span class="sel-marca">${S.sel.has(p.id) ? "☑" : "☐"}</span>` : ""}
+    ${S.orden === "fase" ? `<span class="fase-punto" style="--c:${e.color}" title="${e.nombre}"></span>` : `<span class="estado" style="--c:${e.color}">${e.nombre}</span>`}
+    <span class="fila-txt"><b>${esc(p.nombre || "Sin nombre")}</b><small>${esc([p.poblacion, p.aseguradora, p.expediente].filter(Boolean).join(" · "))}</small></span>
+    ${p.fecha_cita && p.estado === "contactado" ? `<small class="fila-cita">📅 ${new Date(p.fecha_cita).toLocaleString("es-ES", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}</small>` : ""}
+    ${chipDias(p)}
+  </article>`;
+}
+
 function tarjetaParte(p) {
   const e = estadoInfo(p.estado);
-  const asignado = S.miembros.find((m) => m.user_id === p.asignado_a)?.nombre;
+  const asignado = USAR_ASIGNADO ? S.miembros.find((m) => m.user_id === p.asignado_a)?.nombre : null;
   return `
   <article class="parte ${S.sel?.has(p.id) ? "elegido" : ""}" data-id="${p.id}" style="--ase:${colorAseg(p.aseguradora)}">
     <div class="parte-top">
@@ -2028,13 +2065,13 @@ async function vistaFormulario(id) {
       <label>Fecha y hora de la cita<input type="datetime-local" name="fecha_cita" value="${toLocalInput(p.fecha_cita)}"></label>
       <div class="dos precio">${campo("importe_valorado", "Valorado (€ sin IVA)", "number", 'step="0.01" inputmode="decimal"')}${campo("importe_autorizado", "Autorizado (€)", "number", 'step="0.01" inputmode="decimal"')}</div>
     </div>` : ""}
-    <div class="tarjeta">
+    ${USAR_ASIGNADO ? `<div class="tarjeta">
       <label>Asignado a
         <select name="asignado_a"><option value="">— Sin asignar —</option>
           ${S.miembros.map((m) => `<option value="${m.user_id}" ${m.user_id === p.asignado_a ? "selected" : ""}>${esc(m.nombre)}</option>`).join("")}
         </select>
       </label>
-    </div>
+    </div>` : ""}
     <div class="pie-form">
       <button type="button" class="btn" id="cancelar">Cancelar</button>
       <button type="submit" class="btn primario">Guardar</button>
@@ -2183,10 +2220,10 @@ async function vistaParte(id) {
     ${dato("Fecha encargo", fFecha(p.fecha_encargo))}
     ${p.fecha_cita ? `<div class="dato"><span>Cita</span><b>${fFechaHora(p.fecha_cita)} · <a href="${linkCalendario(p)}" target="_blank" rel="noopener">📅 Añadir al calendario</a></b></div>` : ""}
     ${verPrecios() ? dato("Valorado (sin IVA)", fEuros(p.importe_valorado)) + dato("Autorizado", fEuros(p.importe_autorizado)) : ""}
-    <div class="dato"><span>Asignado</span><b>${esLector() ? esc(asignado || "—") : `
+    ${USAR_ASIGNADO ? `<div class="dato"><span>Asignado</span><b>${esLector() ? esc(asignado || "—") : `
       <select id="asignar"><option value="">— Sin asignar —</option>
         ${S.miembros.map((m) => `<option value="${m.user_id}" ${m.user_id === p.asignado_a ? "selected" : ""}>${esc(m.nombre)}</option>`).join("")}
-      </select>`}</b></div>
+      </select>`}</b></div>` : ""}
     ${p.tramitador_nombre || p.tramitador_telefono || p.tramitador_email ? `
       <div class="dato"><span>Tramitador</span><b>${esc(p.tramitador_nombre || "")}
         ${p.tramitador_telefono ? `<br><a href="${linkLlamar(p.tramitador_telefono)}">${esc(p.tramitador_telefono)}</a> · <a href="${linkWhatsApp(p.tramitador_telefono)}" target="_blank" rel="noopener">WhatsApp</a>` : ""}
