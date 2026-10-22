@@ -936,7 +936,8 @@ async function vistaFacturacion() {
           <select id="fMes">${meses.map((m) => `<option value="${m}" ${m === mes ? "selected" : ""}>${nombreMes(m)}</option>`).join("")}</select></div>
         ${delMes.length ? `<div class="fact-lista">${delMes.map((p) => {
           const imp = importeParte(p);
-          const est = p.cobrado_at ? `<em class="ok">Cobrado ${fFecha(p.cobrado_at)}</em>` : p.factura_ref ? `<em>Facturado · ${esc(p.factura_ref)}</em>` : "";
+          const est = (p.cobrado_at ? `<em class="ok">Cobrado ${fFecha(p.cobrado_at)}</em>` : p.factura_ref ? `<em>Facturado · ${esc(p.factura_ref)}</em>` : "")
+            + (p.factura_ref ? `<button type="button" class="quitar-fact" data-quitar="${p.id}">Quitar de la factura</button>` : "");
           return `<label class="fact-fila ${p.factura_ref ? "facturado" : ""}">
             <input type="checkbox" data-id="${p.id}" ${sel.has(p.id) ? "checked" : ""}>
             <span class="fact-info"><b>${esc(p.nombre || "Sin nombre")}</b><small><button type="button" class="fecha-btn" data-fecha="${p.id}" title="Cambiar la fecha">📅 ${fFecha(p.realizado_at)}</button> · ${esc(p.aseguradora || "")} ${esc(p.expediente || "")}${p.poblacion ? " · " + esc(p.poblacion) : ""}</small>${est}</span>
@@ -966,6 +967,22 @@ async function vistaFacturacion() {
     $$("#fact .fecha-btn").forEach((b) => b.addEventListener("click", (e) => {
       e.preventDefault(); e.stopPropagation();
       const p = term.find((x) => x.id === b.dataset.fecha); if (p) sheetFechaRealizado(p, () => pinta());
+    }));
+    // Corregir un parte facturado por error: vuelve a "sin facturar" (y sin cobrar) y queda anotado en su historial
+    $$("#fact [data-quitar]").forEach((b) => b.addEventListener("click", async (e) => {
+      e.preventDefault(); e.stopPropagation();
+      const p = term.find((x) => x.id === b.dataset.quitar); if (!p) return;
+      const ref = p.factura_ref;
+      if (!confirm(`¿Quitar a ${p.nombre || "este parte"} de la factura ${ref}?\nVolverá a "sin facturar"${p.cobrado_at ? " y se quitará también el cobro" : ""}.`)) return;
+      const cambios = { factura_ref: null, facturado_at: null, cobrado_at: null };
+      try {
+        await conCarga("Guardando…", async () => {
+          await api.actualizarParte(p.id, cambios);
+          await api.anadirEvento(p.id, null, `Quitado de la factura ${ref}.`);
+        });
+        Object.assign(p, cambios); sel.delete(p.id);
+        toast(`Quitado de la factura ${ref}`, "ok"); pinta();
+      } catch { /* conCarga avisa */ }
     }));
     $$("#fact .fact-fila input").forEach((c) => c.onchange = () => { c.checked ? sel.add(c.dataset.id) : sel.delete(c.dataset.id); pinta(); });
     const lineasDe = (p) => [p.lineas_autorizadas, p.lineas_realizadas, p.lineas_valoracion].find((l) => (l || []).length) || [];
