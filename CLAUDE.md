@@ -19,6 +19,7 @@ PWA en español para gestionar partes de siniestros de aseguradoras (Mapfre, San
 - Sube `VERSION` y `FECHA_VERSION` en `docs/js/config.js` (se muestran en el pie de la app).
 - `index.html` tiene un manejador que limpia la caché y recarga una vez si se mezclan módulos viejos y nuevos; no lo quites.
 - La app comparte web (`mueblescarrascosa.github.io`) con otras apps del usuario (piscina, olivas…). Por eso el manifest lleva `"id": "/partes-app/"` fijo (un `"./"` se resuelve a la raíz de la web y Chrome confundía las apps) y el service worker solo borra cachés que empiezan por `partes-`. No cambies el `id`: Chrome la trataría como otra app y habría que reinstalarla.
+- Por lo mismo, el cliente de Supabase guarda la sesión con `storageKey: "partes-app-auth"` (`api.js`). Olivas usa el mismo proyecto Supabase con la clave por defecto (`sb-<ref>-auth-token`), y si las dos compartieran clave, entrar en una con otro correo cerraba la sesión de la otra. No la quites ni la iguales a la de otra app.
 
 ## Arquitectura
 

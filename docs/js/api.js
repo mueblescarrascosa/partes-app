@@ -5,7 +5,9 @@ const BUCKET = "archivos";
 // ---------------------------------------------------------------- Supabase
 function crearApiSupabase() {
   const sb = window.supabase.createClient(CFG.SUPABASE_URL, CFG.SUPABASE_ANON_KEY, {
-    auth: { persistSession: true, autoRefreshToken: true },
+    // Clave propia: Olivas está en el mismo dominio (github.io) y el mismo proyecto Supabase,
+    // y con la clave por defecto una sesión pisaba a la otra.
+    auth: { persistSession: true, autoRefreshToken: true, storageKey: "partes-app-auth" },
   });
   const ok = ({ data, error }) => { if (error) throw error; return data; };
   let yo = null;
