@@ -855,8 +855,10 @@ async function cargarXLSX() {
 const DIAS_COBRO = () => Number(CFG.DIAS_COBRO ?? 60);
 const IVA_FACT = () => Number(CFG.IVA_FACTURA ?? 21);
 const conIVA = (base) => { const iva = Math.round(base * IVA_FACT()) / 100; return { base, iva, total: Math.round((base + iva) * 100) / 100 }; };
-// Lo que se factura: los códigos autorizados; si no hay, el importe autorizado; si no, lo realizado; si no, lo valorado
+// Lo que se factura: los códigos autorizados; si no hay, el importe autorizado; si no, lo realizado; si no, lo valorado.
+// Un parte cerrado sin hacer el trabajo (fin de servicio) solo factura lo que se eligió al cerrarlo (lineas_realizadas), o nada.
 function importeParte(p) {
+  if (p.cierre) return p.cierre.facturar ? totalesLineas(p.lineas_realizadas || [], 0).base : 0;
   if ((p.lineas_autorizadas || []).length) return totalesLineas(p.lineas_autorizadas, 0).base;
   if (p.importe_autorizado != null) return Number(p.importe_autorizado);
   if ((p.lineas_realizadas || []).length) return totalesLineas(p.lineas_realizadas, 0).base;
@@ -864,6 +866,17 @@ function importeParte(p) {
   if (p.importe_valorado != null) return Number(p.importe_valorado);
   return null;
 }
+// Las líneas que van en la factura (mismo orden que importeParte)
+const lineasFactura = (p) => p.cierre ? (p.cierre.facturar ? p.lineas_realizadas || [] : []) : [p.lineas_autorizadas, p.lineas_realizadas, p.lineas_valoracion].find((l) => (l || []).length) || [];
+// Fin de servicio: por qué se cierra un parte sin hacer el trabajo
+const MOTIVOS_CIERRE = [
+  { id: "rechazado",   nombre: "El cliente lo rechaza",        corto: "Rechazado" },
+  { id: "anulado",     nombre: "La compañía lo anula",          corto: "Anulado" },
+  { id: "indemnizado", nombre: "Acepta una indemnización",      corto: "Indemnizado" },
+  { id: "otro",        nombre: "Otro motivo",                   corto: "Cerrado" },
+];
+const motivoCierre = (c) => MOTIVOS_CIERRE.find((m) => m.id === c?.motivo) ?? MOTIVOS_CIERRE[3];
+const textoCierre = (c) => c ? `${motivoCierre(c).corto}${c.motivo === "otro" && c.motivo_txt ? `: ${c.motivo_txt}` : ""}` : "";
 const diaAISO = (d) => (d ? new Date(`${d}T12:00:00`).toISOString() : null);
 // Día en que se hizo una foto: fecha EXIF de la cámara (DateTimeOriginal) o, si no la tiene, la fecha del archivo
 async function fechaDeFoto(file) {
@@ -1103,7 +1116,8 @@ const nombreMes = (k) => { const [a, m] = k.split("-"); const t = new Date(+a, +
 const sumarDias = (fecha, d) => { const x = new Date(fecha + "T12:00:00"); x.setDate(x.getDate() + d); return x; };
 
 function datosFacturacion() {
-  const term = (S.partes || []).filter((p) => p.estado === "realizado" && !esConexion(p));
+  // Los cerrados sin facturar nada (fin de servicio) no van a la facturación
+  const term = (S.partes || []).filter((p) => p.estado === "realizado" && !esConexion(p) && !(p.cierre && !p.cierre.facturar));
   const mesActual = mesDe(new Date().toISOString());
   const sinFacturarAnteriores = term.filter((p) => !p.factura_ref && p.realizado_at && mesDe(p.realizado_at) < mesActual);
   const facturas = new Map();
@@ -1146,7 +1160,7 @@ async function vistaFacturacion() {
     const sinImporte = elegidos.filter((p) => importeParte(p) == null).length;
     const pendientes = facturas.filter((f) => !f.cobrado);
     const pendTotal = pendientes.reduce((a, f) => a + f.total, 0);
-    const lineasFila = (p) => [p.lineas_autorizadas, p.lineas_realizadas, p.lineas_valoracion].find((l) => (l || []).length) || [];
+    const lineasFila = lineasFactura;
     // Cada fila: casilla para marcar, datos (al tocarlos se ven sus códigos) y "Ver ›" para abrir el parte
     const fila = (p) => {
       const imp = importeParte(p), ls = lineasFila(p);
@@ -1219,9 +1233,9 @@ async function vistaFacturacion() {
       S.factVuelta = { mes, ids: [...sel], abiertos: [...abiertos] };
       S.navIds = [...porFacturar, ...yaFacturados].map((p) => p.id);
     }));
-    const lineasDe = (p) => [p.lineas_autorizadas, p.lineas_realizadas, p.lineas_valoracion].find((l) => (l || []).length) || [];
-    const filasExp = () => elegidos.map((p) => ({ ...p, importe: importeParte(p) || 0, lineas: lineasDe(p), autorizado: !(p.lineas_autorizadas || []).length && p.importe_autorizado != null,
-      trabajo: lineasDe(p).map((l) => `${l.codigo || ""} ${l.descripcion || ""}`.trim()).join("; ") || (p.averia || "").slice(0, 90) }));
+    const lineasDe = lineasFactura;
+    const filasExp = () => elegidos.map((p) => ({ ...p, importe: importeParte(p) || 0, lineas: lineasDe(p), autorizado: !p.cierre && !(p.lineas_autorizadas || []).length && p.importe_autorizado != null,
+      trabajo: (p.cierre ? `[${textoCierre(p.cierre)}] ` : "") + (lineasDe(p).map((l) => `${l.codigo || ""} ${l.descripcion || ""}`.trim()).join("; ") || (p.averia || "").slice(0, 90)) }));
     // Todos los archivos empiezan por el nombre de la empresa, para que MULTIBETT vea de quién vienen
     const nombreRelacion = async (ext, ref) => {
       const { empresaArchivo, slug } = await cargarPDF();
@@ -1312,7 +1326,7 @@ function filaParte(p) {
   <article class="parte fila ${S.sel?.has(p.id) ? "elegido" : ""}" data-id="${p.id}" style="--ase:${colorAseg(p.aseguradora)}">
     ${S.sel ? `<span class="sel-marca">${S.sel.has(p.id) ? "☑" : "☐"}</span>` : ""}
     ${S.orden === "fase" ? `<span class="fase-punto" style="--c:${e.color}" title="${e.nombre}"></span>` : `<span class="estado" style="--c:${e.color}">${e.nombre}</span>`}
-    <span class="fila-txt"><b>${esc(p.nombre || "Sin nombre")}</b><small>${esc([p.poblacion, p.aseguradora, p.expediente].filter(Boolean).join(" · "))}</small></span>
+    <span class="fila-txt"><b>${esc(p.nombre || "Sin nombre")}</b><small>${p.cierre ? `🏁 ${esc(textoCierre(p.cierre))} · ` : ""}${esc([p.poblacion, p.aseguradora, p.expediente].filter(Boolean).join(" · "))}</small></span>
     ${p.fecha_cita && p.estado === "contactado" ? `<small class="fila-cita">📅 ${new Date(p.fecha_cita).toLocaleString("es-ES", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}</small>` : ""}
     ${chipDias(p)}
   </article>`;
@@ -1329,6 +1343,7 @@ function tarjetaParte(p) {
       <span class="exp">${esc(p.expediente || "sin nº")}</span>
       ${p.repetido_de ? '<span class="rep-badge" title="Parte repetido con cambios">🔁 Repetido</span>' : ""}
       ${esConexion(p) ? '<span class="cx-badge" title="Presupuesto particular para el cliente">💬 Conexión</span>' : ""}
+      ${p.cierre ? `<span class="cx-badge" title="Fin de servicio sin hacer el trabajo">🏁 ${esc(textoCierre(p.cierre))}</span>` : ""}
       ${esAsistencia(p) ? `<span class="cx-badge as-badge" title="${esc(p.aviso_cobertura || "Asistencia")}">🧰 ${esc(p.modalidad || "Asistencia")}</span>` : ""}
       ${p.limite_importe ? `<span class="cx-badge lim-badge" title="Límite de importe">💶 ≤ ${fEuros(p.limite_importe)}</span>` : ""}
       ${chipDias(p)}
@@ -2260,12 +2275,16 @@ async function vistaParte(id) {
         </button>`).join("")}
     </div>
     <div class="estado-actual" style="--c:${e.color}">${chipDias(p, true)} · Estado: <b>${e.nombre}</b>${p.fecha_cita && idx < 2 ? ` · Cita ${fFechaHora(p.fecha_cita)}` : ""}</div>
-    ${p.estado === "realizado" && p.realizado_at ? `<div class="fecha-realizado">Hecho el <b>${fFecha(p.realizado_at)}</b>${esLector() ? "" : ` <button type="button" class="btn peq" id="cambiarFechaR">📅 Cambiar fecha</button>`}</div>` : ""}
+    ${p.cierre ? `<div class="fecha-realizado" style="border-left:4px solid #b45309;padding-left:.6em">🏁 <b>Servicio finalizado: ${esc(textoCierre(p.cierre))}</b>${p.realizado_at ? ` · ${fFecha(p.realizado_at)}` : ""}
+      <br><small>${p.cierre.facturar ? `Se factura: ${esc((p.lineas_realizadas || []).map((l) => l.descripcion || l.codigo).join(", ") || "—")}<span class="precio"> (${fEuros(importeParte(p))})</span>` : "No se factura nada"}${p.cierre.nota ? ` · ${esc(p.cierre.nota)}` : ""}</small>
+      ${esLector() ? "" : `<br><button type="button" class="btn peq" id="editarCierre">✏️ Cambiar</button> <button type="button" class="btn peq" id="reabrir">↩ Reabrir el parte</button>`}</div>`
+    : p.estado === "realizado" && p.realizado_at ? `<div class="fecha-realizado">Hecho el <b>${fFecha(p.realizado_at)}</b>${esLector() ? "" : ` <button type="button" class="btn peq" id="cambiarFechaR">📅 Cambiar fecha</button>`}</div>` : ""}
     <div class="lista-botones">
       ${sig && !esLector() ? `<button class="btn primario ancho" id="avanzar" style="--c:${sig.color}">Marcar como ${sig.nombre.toLowerCase()} →</button>` : ""}
-      ${idx >= idxEstado("visitado") && !esLector() ? `<button class="btn primario ancho" id="informe" style="--c:#16a34a">${I.wa} ${esConexion(p) ? `Enviar ${p.estado === "realizado" ? "trabajo terminado" : "presupuesto"} al cliente` : `Enviar ${p.estado === "realizado" ? "trabajo terminado" : "visita"} a ${esc(DEST.nombre)}`}</button>` : ""}
+      ${idx >= idxEstado("visitado") && !esLector() ? `<button class="btn primario ancho" id="informe" style="--c:#16a34a">${I.wa} ${esConexion(p) ? `Enviar ${p.cierre ? "fin de servicio" : p.estado === "realizado" ? "trabajo terminado" : "presupuesto"} al cliente` : `Enviar ${p.cierre ? "fin de servicio" : p.estado === "realizado" ? "trabajo terminado" : "visita"} a ${esc(DEST.nombre)}`}</button>` : ""}
       <button class="btn ancho" id="nota">Añadir nota</button>
       ${esLector() ? "" : '<button class="btn ancho" id="alTaller">📤 Enviar al taller</button>'}
+      ${!esLector() && p.estado !== "realizado" && !p.cierre ? '<button class="btn ancho" id="finServicio">🏁 Fin de servicio <small>(rechaza, anula, indemnización…)</small></button>' : ""}
     </div>
   </section>
 
@@ -2329,6 +2348,7 @@ async function vistaParte(id) {
   $("#aContacto").onclick = () => guardarContacto(p);
   // Autorizar = confirmar la valoración código a código (si hay códigos valorados)
   const irAFase = (dest) => {
+    if (p.cierre) { reabrirParte(p); return; }   // cerrado por fin de servicio: primero se reabre
     if (dest === "autorizado" && !esConexion(p) && (p.lineas_valoracion || []).length && idxEstado(p.estado) < idxEstado("autorizado")) { location.hash = `/lineas/${p.id}/autorizados`; return; }
     sheetFase(p, dest);
   };
@@ -2337,6 +2357,9 @@ async function vistaParte(id) {
   $("#nota").onclick = () => sheetFase(p, null);
   $("#alTaller")?.addEventListener("click", () => sheetTaller(p));
   $("#cambiarFechaR")?.addEventListener("click", () => sheetFechaRealizado(p, () => vistaParte(p.id)));
+  $("#finServicio")?.addEventListener("click", () => sheetCierre(p));
+  $("#editarCierre")?.addEventListener("click", () => sheetCierre(p));
+  $("#reabrir")?.addEventListener("click", () => reabrirParte(p));
   if (!esLector()) $$(".paso").forEach((b) => b.addEventListener("click", () => {
     const dest = b.dataset.estado;
     if (dest === p.estado) return;
@@ -2970,13 +2993,103 @@ function sheetFase(p, destino) {
   });
 }
 
+// ------------------------------------------------------------------ Fin de servicio
+// El parte termina sin hacer el trabajo: el cliente lo rechaza, la compañía lo anula, acepta una indemnización…
+// Pasa a «realizado» y, si se factura algo (la visita, horas u otro concepto), solo esas líneas van a lineas_realizadas.
+// En cierre se guarda cómo estaba (estado_antes, lineas_antes) para poder reabrirlo tal cual.
+async function sheetCierre(p) {
+  await cargarTarifa();
+  const c = p.cierre || {};
+  const deTarifa = (cod, def) => ({ ...def, ...((S.tarifa || []).find((t) => t.codigo === cod) || {}) });
+  const visita = deTarifa("500", { codigo: "500", descripcion: "Intervención mínima, visita al riesgo sin realizar reparación", precio: 46.63 });
+  const hora = deTarifa("HORA", { codigo: "HORA", descripcion: "Hora de mano de obra o visita sin actuación final", precio: 21 });
+  const ant = c.facturar ? p.lineas_realizadas || [] : [];
+  const tiene = (cod) => ant.find((l) => l.codigo === cod);
+  const otra = ant.find((l) => l.codigo !== visita.codigo && l.codigo !== hora.codigo);
+  const motivo0 = c.motivo || "rechazado";
+  const s = abrirSheet(`
+    <h2>🏁 Fin de servicio</h2>
+    <form id="fCierre" class="form">
+      <p class="suave">El parte se da por terminado sin hacer el trabajo: sale de pendientes y, si facturas algo, va a la facturación del mes.</p>
+      <b>¿Por qué se cierra?</b>
+      ${MOTIVOS_CIERRE.map((m) => `<label class="check"><input type="radio" name="motivo" value="${m.id}" ${motivo0 === m.id ? "checked" : ""}> ${m.nombre}</label>`).join("")}
+      <label id="lMotivo" ${motivo0 === "otro" ? "" : "hidden"}>¿Cuál?<input name="motivo_txt" value="${esc(c.motivo_txt || "")}" placeholder="Ej.: lo arregla otro gremio"></label>
+      <label>Nota (opcional)<textarea name="nota" rows="2" placeholder="Ej.: no quiere obras ahora; la compañía le paga la indemnización y lo arregla él">${esc(c.nota || "")}</textarea></label>
+      <b>¿Se factura algo?</b>
+      <label class="check"><input type="checkbox" name="f_visita" ${tiene(visita.codigo) || !p.cierre ? "checked" : ""}> La visita <small class="suave">(${esc(visita.codigo)}<span class="precio"> · ${fEuros(visita.precio)}</span>)</small></label>
+      <label class="check"><input type="checkbox" name="f_horas" ${tiene(hora.codigo) ? "checked" : ""}> Horas de trabajo <small class="suave">(${esc(hora.codigo)}<span class="precio"> · ${fEuros(hora.precio)}/h</span>)</small></label>
+      <label id="lHoras" ${tiene(hora.codigo) ? "" : "hidden"}>¿Cuántas horas?<input type="number" name="horas" step="0.5" min="0.5" inputmode="decimal" value="${tiene(hora.codigo)?.cantidad || 1}"></label>
+      <label class="check"><input type="checkbox" name="f_otro" ${otra ? "checked" : ""}> Otra cosa</label>
+      <div id="dOtro" ${otra ? "" : "hidden"}><label>Concepto<input name="otro_desc" value="${esc(otra?.descripcion || "")}" placeholder="Ej.: desplazamiento, informe…"></label>
+        <label class="precio">Importe (€, sin IVA)<input type="number" step="0.01" inputmode="decimal" name="otro_precio" value="${otra?.precio ?? ""}"></label></div>
+      <small class="suave">Si no marcas nada, no se factura y el parte no sale en la facturación.</small>
+      <label>Fecha del cierre<input type="date" name="dia" value="${p.realizado_at ? new Date(p.realizado_at).toLocaleDateString("sv-SE") : hoyDia()}" max="${hoyDia()}"></label>
+      <p class="aviso-rojo" id="fError" hidden>No se ha podido guardar. Revisa la conexión y vuelve a pulsar <b>Cerrar el parte</b>.</p>
+      <div class="pie-form">
+        <button type="button" class="btn" data-cerrar>Cancelar</button>
+        <button type="submit" class="btn primario" style="--c:#b45309">${p.cierre ? "Guardar" : "Cerrar el parte"}</button>
+      </div>
+    </form>`);
+  const F = $("#fCierre", s);
+  const tog = () => { $("#lMotivo", s).hidden = F.motivo.value !== "otro"; $("#lHoras", s).hidden = !F.f_horas.checked; $("#dOtro", s).hidden = !F.f_otro.checked; };
+  F.addEventListener("change", tog); tog();
+  F.addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    const lineas = [];
+    if (F.f_visita.checked) lineas.push({ codigo: visita.codigo, descripcion: visita.descripcion, cantidad: 1, precio: Number(visita.precio) || 0 });
+    if (F.f_horas.checked) { const h = Number(F.horas.value); if (!(h > 0)) return toast("Pon cuántas horas", "error"); lineas.push({ codigo: hora.codigo, descripcion: hora.descripcion, cantidad: h, precio: Number(hora.precio) || 0 }); }
+    if (F.f_otro.checked) { const d = F.otro_desc.value.trim(), pr = Number(F.otro_precio.value);
+      if (!d || !(pr > 0)) return toast("Pon el concepto y el importe de lo que facturas", "error");
+      lineas.push({ codigo: "OTRO", descripcion: d, cantidad: 1, precio: pr }); }
+    if (F.motivo.value === "otro" && !F.motivo_txt.value.trim()) return toast("Di el motivo", "error");
+    if (!puedeCambiarFacturado(p, "el fin de servicio y lo que se factura")) return;
+    const cierre = { motivo: F.motivo.value, motivo_txt: F.motivo.value === "otro" ? F.motivo_txt.value.trim() : null, nota: F.nota.value.trim() || null, facturar: lineas.length > 0,
+      fecha: new Date().toISOString(), estado_antes: c.estado_antes ?? p.estado, lineas_antes: c.lineas_antes !== undefined ? c.lineas_antes : (p.lineas_realizadas || null) };
+    const dia = F.dia.value;
+    const cambios = { cierre, estado: "realizado", realizado_at: dia && dia !== hoyDia() ? diaAISO(dia) : new Date().toISOString(), lineas_realizadas: lineas.length ? lineas : null };
+    const btn = ev.target.querySelector("[type=submit]"); btn.disabled = true; $("#fError", s).hidden = true;
+    try {
+      await conCarga("Guardando…", async () => {
+        await api.actualizarParte(p.id, cambios);
+        // En el historial, sin importes (lo leen también quienes no ven precios)
+        const que = lineas.length ? `Se factura: ${lineas.map((l) => l.codigo === hora.codigo ? `${Number(l.cantidad).toLocaleString("es-ES")} h` : l.descripcion).join(", ")}.` : "No se factura nada.";
+        const txt = `Fin de servicio: ${textoCierre(cierre)}. ${que}${cierre.nota ? " " + cierre.nota : ""}`;
+        if (p.estado !== "realizado") await anotarFase(p, "realizado", txt); else await api.anadirEvento(p.id, null, txt);
+      });
+    } catch { btn.disabled = false; $("#fError", s).hidden = false; return; }
+    await anotarCambioFacturado(p, "el fin de servicio");
+    cerrarSheet();
+    toast(`Parte cerrado: ${textoCierre(cierre)}${lineas.length ? "" : " (sin facturar)"}`, "ok");
+    await vistaParte(p.id);
+    // Como al terminar un trabajo: se ofrece avisar del cierre (a MULTIBETT o, en una conexión, al cliente)
+    try { flujoInforme(await api.obtenerParte(p.id)); } catch { /* se puede mandar luego desde la ficha */ }
+  });
+}
+// Reabrir un parte cerrado por error: vuelve a la fase y a las líneas que tenía antes del cierre
+async function reabrirParte(p) {
+  const c = p.cierre; if (!c) return;
+  const antes = estadoInfo(c.estado_antes || "visitado");
+  if (!confirm(`¿Reabrir el parte? Vuelve a «${antes.nombre}» y deja de contar como terminado${c.facturar ? " (y sale de la facturación)" : ""}.`)) return;
+  if (!puedeCambiarFacturado(p, "el fin de servicio (se reabre el parte)")) return;
+  try {
+    await conCarga("Reabriendo…", async () => {
+      await api.actualizarParte(p.id, { cierre: null, estado: antes.id, realizado_at: null, lineas_realizadas: c.lineas_antes ?? null });
+      await api.anadirEvento(p.id, antes.id, `Reabierto: se deshace el fin de servicio (${textoCierre(c)}).`);
+    });
+  } catch { toast("No se ha podido reabrir. Revisa la conexión.", "error"); return; }
+  await anotarCambioFacturado(p, "el fin de servicio (reabierto)");
+  toast(`Parte reabierto: vuelve a ${antes.nombre.toLowerCase()}`, "ok");
+  vistaParte(p.id);
+}
+
 // ------------------------------------------------------------------ Informe y envío (PDF o mensaje + fotos)
 function textoInforme(p, conPrecios) {
-  const final = p.estado === "realizado";
-  const lineas = final && (p.lineas_realizadas || []).length ? p.lineas_realizadas : p.lineas_valoracion || [];
+  const final = p.estado === "realizado", cie = p.cierre;
+  // Cerrado por fin de servicio: solo lo que se factura (o nada), nunca la valoración de lo que no se hizo
+  const lineas = cie ? (cie.facturar ? p.lineas_realizadas || [] : []) : final && (p.lineas_realizadas || []).length ? p.lineas_realizadas : p.lineas_valoracion || [];
   const ev = p.eventos || [];
   const fechaDe = (estado) => [...ev].reverse().find((e) => e.estado === estado)?.created_at;
-  const notas = ev.filter((e) => e.nota && ["visitado", "valorado", "realizado", null].includes(e.estado ?? null) && !/^(Parte recibido de nuevo|Ha llegado otro parte|Preparado mensaje)/.test(e.nota))
+  const notas = ev.filter((e) => e.nota && ["visitado", "valorado", "realizado", null].includes(e.estado ?? null) && !/^(Parte recibido de nuevo|Ha llegado otro parte|Preparado mensaje|Fin de servicio:|Reabierto:)/.test(e.nota))
     .slice(-3).map((e) => "- " + e.nota.trim());
   const L = [];
   const cx = esConexion(p);
@@ -2984,7 +3097,7 @@ function textoInforme(p, conPrecios) {
     L.push(`*${final ? "TRABAJO TERMINADO" : "PRESUPUESTO"}*`);
     L.push(`Cliente: ${p.nombre || "—"}`);
   } else {
-  L.push(`*${final ? "TRABAJO TERMINADO" : "VISITA REALIZADA"}*`);
+  L.push(`*${cie ? `SERVICIO FINALIZADO SIN REPARACIÓN (${textoCierre(cie).toUpperCase()})` : final ? "TRABAJO TERMINADO" : "VISITA REALIZADA"}*`);
   L.push(`${p.aseguradora || ""} · Exp. ${p.expediente || "—"}${p.num_encargo ? " · Encargo " + p.num_encargo : ""}${p.num_siniestro ? " · Siniestro " + p.num_siniestro : ""}`);
   L.push(`Cliente: ${p.nombre || "—"}${p.telefono ? " · Tel. " + p.telefono : ""}`);
   }
@@ -2993,10 +3106,11 @@ function textoInforme(p, conPrecios) {
   if (p.averia) L.push(`${cx ? "Trabajo" : "Avería"}: ${p.averia}`);
   const fv = fechaDe("visitado"), fr = fechaDe("realizado");
   if (fv) L.push(`Visita: ${fFecha(fv)}`);
-  if (final && fr) L.push(`Terminado: ${fFecha(fr)}`);
+  if (final && fr) L.push(`${cie ? "Cerrado" : "Terminado"}: ${fFecha(fr)}`);
+  if (cie) { L.push(`Motivo: ${motivoCierre(cie).nombre}${cie.motivo_txt ? ` (${cie.motivo_txt})` : ""}`); if (cie.nota) L.push(cie.nota); if (!cie.facturar) L.push("No se factura nada."); }
   if (notas.length && !cx) { L.push(""); L.push("*Observaciones:*"); L.push(...notas); }
   if (lineas.length) {
-    L.push(""); L.push(`*${final && (p.lineas_realizadas || []).length ? "Trabajos realizados" : (cx ? "Presupuesto" : "Valoración")}:*`);
+    L.push(""); L.push(`*${cie ? "Se factura" : final && (p.lineas_realizadas || []).length ? "Trabajos realizados" : (cx ? "Presupuesto" : "Valoración")}:*`);
     for (const l of lineas) {
       const cant = Number(l.cantidad || 1).toLocaleString("es-ES");
       L.push(`- ${l.codigo ? l.codigo + " " : ""}${l.descripcion || ""} × ${cant}${conPrecios ? " = " + fEuros(importeLinea(l)) : ""}`);
@@ -3040,7 +3154,7 @@ async function flujoInforme(pIn) {
   const textoMsg = () => `Texto escrito${fotos.length ? ` y ${fotos.length} foto${fotos.length > 1 ? "s" : ""} adjunta${fotos.length > 1 ? "s" : ""}` : " (sin fotos)"}`;
   const hayLineas = (p.lineas_valoracion || []).length || (p.lineas_realizadas || []).length || p.importe_valorado != null;
   let precios = verPrecios() && (esConexion(p) || sessionGet("precios") !== "0");
-  const tipoInf = p.estado === "realizado" ? "trabajo terminado" : (esConexion(p) ? "presupuesto" : idxEstado(p.estado) >= idxEstado("valorado") ? "valoración" : "visita");
+  const tipoInf = p.cierre ? "fin de servicio" : p.estado === "realizado" ? "trabajo terminado" : (esConexion(p) ? "presupuesto" : idxEstado(p.estado) >= idxEstado("valorado") ? "valoración" : "visita");
   const s = abrirSheet(`
     <h2>Enviar ${tipoInf} ${esc(aQuien(destinoDe(p).nombre))}</h2>
     ${esConexion(p) && !p.telefono ? '<p class="aviso-campo">⚠️ Este parte no tiene teléfono del cliente.</p>' : ""}

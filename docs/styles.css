@@ -81,7 +81,8 @@ h3 { font-size: 15px; margin-bottom: 8px; color: var(--muted); text-transform: u
 label { display: grid; gap: 4px; font-size: 13px; font-weight: 600; color: var(--muted); }
 input, select, textarea { font: inherit; font-size: 16px; color: var(--text); background: var(--bg); border: 1px solid var(--line); border-radius: 10px; padding: 11px 12px; width: 100%; min-width: 0; }
 textarea { resize: vertical; }
-input[type=checkbox] { width: 20px; height: 20px; padding: 0; accent-color: #2563eb; }
+input[type=checkbox], input[type=radio] { width: 20px; height: 20px; padding: 0; accent-color: #2563eb; }
+[hidden] { display: none !important; }
 input:focus, select:focus, textarea:focus { outline: 2px solid #2563eb; outline-offset: -1px; }
 .dos { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .tres { display: grid; grid-template-columns: 90px 1fr 1fr; gap: 10px; }

@@ -28,7 +28,8 @@ export async function generarInforme(parte, api, miembros = [], opc = {}) {
   if (E.direccion) doc.text(E.direccion, M, 24);
   doc.setFont("helvetica", "bold"); doc.setFontSize(10);
   const esFinal = parte.estado === "realizado";
-  doc.text(cx ? (esFinal ? "TRABAJO REALIZADO" : "PRESUPUESTO") : (esFinal ? "INFORME DE TRABAJO REALIZADO" : "INFORME DE VISITA"), W - M, 13, { align: "right" });
+  const cie = parte.cierre;   // fin de servicio: terminado sin hacer el trabajo
+  doc.text(cie ? "SERVICIO FINALIZADO SIN REPARACIÓN" : cx ? (esFinal ? "TRABAJO REALIZADO" : "PRESUPUESTO") : (esFinal ? "INFORME DE TRABAJO REALIZADO" : "INFORME DE VISITA"), W - M, 13, { align: "right" });
   doc.setFont("helvetica", "normal"); doc.setFontSize(8.5);
   doc.text(`Fecha: ${fFecha(new Date())}`, W - M, 19, { align: "right" });
   doc.setTextColor(20);
@@ -79,12 +80,18 @@ export async function generarInforme(parte, api, miembros = [], opc = {}) {
   titulo(cx ? "Trabajo solicitado" : "Daño / avería");
   parrafo(parte.averia || "—");
   y += 2;
+  if (cie) {
+    const M_CIE = { rechazado: "El cliente rechaza la reparación", anulado: "La compañía anula el encargo", indemnizado: "El cliente acepta una indemnización", otro: "Otro motivo" };
+    titulo("Fin de servicio");
+    parrafo([(M_CIE[cie.motivo] || "Otro motivo") + (cie.motivo_txt ? ": " + cie.motivo_txt : "") + ".", cie.nota, cie.facturar ? "" : "No se factura nada."].filter(Boolean).join(" "));
+    y += 2;
+  }
 
   // ---- Líneas de tarifa
   const lineasFinal = (parte.lineas_realizadas || []).length ? parte.lineas_realizadas : parte.lineas_valoracion || [];
-  const lineas = esFinal ? lineasFinal : parte.lineas_valoracion || [];
+  const lineas = cie ? (cie.facturar ? parte.lineas_realizadas || [] : []) : esFinal ? lineasFinal : parte.lineas_valoracion || [];
   if (lineas.length) {
-    titulo(esFinal && (parte.lineas_realizadas || []).length ? "Trabajos realizados" : (cx ? "Presupuesto" : "Valoración"), 20);
+    titulo(cie ? "Se factura" : esFinal && (parte.lineas_realizadas || []).length ? "Trabajos realizados" : (cx ? "Presupuesto" : "Valoración"), 20);
     const cols = conPrecios ? [
       { t: "Código", w: 16, a: "left" }, { t: "Descripción", w: 88, a: "left" }, { t: "Cant.", w: 14, a: "right" },
       { t: "Precio", w: 22, a: "right" }, { t: "Dto", w: 14, a: "right" }, { t: "Importe", w: 26, a: "right" },

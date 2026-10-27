@@ -23,7 +23,7 @@ function crearApiSupabase() {
     + "codigo_postal,poblacion,provincia,telefono,telefono2,averia,tramitador_nombre,tramitador_telefono,tramitador_email,estado,fecha_cita,"
     + "importe_valorado,importe_autorizado,documento_path,firma_path,informe_path,num_encargo,num_siniestro,lineas_valoracion,lineas_realizadas,"
     + "borrado_at,repetido_de,cambios_repetido,realizado_at,factura_ref,facturado_at,cobrado_at,tipo,lineas_autorizadas,perjudicado_nombre,"
-    + "perjudicado_telefono,modalidad,aviso_cobertura,limite_importe,factura_enviada";
+    + "perjudicado_telefono,modalidad,aviso_cobertura,limite_importe,factura_enviada,cierre";
 
   // Supabase devuelve como mucho 1.000 filas por consulta: las listas se leen en bloques.
   // Los bloques van ordenados por la clave única (no cambia aunque alguien edite mientras se lee)
