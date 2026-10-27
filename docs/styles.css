@@ -465,3 +465,38 @@ body.con-sel .lista { padding-bottom: 90px; }
 /* Ficha: pasar al parte anterior o siguiente de la lista */
 .nav-partes { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 8px 12px 0; }
 .nav-partes .btn { text-decoration: none; }
+
+/* ---------- Barra de abajo: Partes · Hoy · Agenda · Facturación · Todo (siempre a mano) */
+.tabbar { position: fixed; left: 0; right: 0; bottom: 0; z-index: 30; display: flex; justify-content: center; background: var(--card); border-top: 1px solid var(--line);
+  padding: 4px max(6px, calc(50vw - 360px)) calc(4px + var(--safe-b)); box-shadow: 0 -4px 16px rgba(0,0,0,.12); }
+.tabbar > a, .tabbar > button { flex: 1; max-width: 140px; display: grid; justify-items: center; gap: 1px; padding: 6px 2px 4px; border: 0; background: none; color: var(--muted);
+  font: inherit; font-size: 11px; font-weight: 600; text-decoration: none; cursor: pointer; position: relative; border-radius: 12px; }
+.tabbar > .activo { color: #2563eb; background: color-mix(in srgb, #2563eb 12%, transparent); }
+.tabbar .tab-emoji { font-style: normal; font-size: 19px; line-height: 22px; height: 22px; }
+.tabbar .badge { position: absolute; top: 2px; left: calc(50% + 6px); right: auto; }
+.tabbar .badge:empty { display: none; }
+body.con-tabbar { padding-bottom: calc(66px + var(--safe-b)); }
+body.con-tabbar .fab { bottom: calc(84px + var(--safe-b)); }
+body.con-tabbar .toast { bottom: calc(150px + var(--safe-b)); }
+body.con-sel .tabbar { display: none; }
+
+/* ---------- Pantalla Todo */
+.todo { padding: 0 12px 20px; display: grid; gap: 12px; }
+.todo .tarjeta { margin: 0; padding: 10px 12px; }
+.todo h3 { margin: 4px 0 6px; }
+.todo-fila { display: flex; align-items: center; gap: 12px; width: 100%; padding: 10px 4px; border: 0; border-top: 1px solid var(--line); background: none;
+  color: var(--text); font: inherit; text-align: left; text-decoration: none; cursor: pointer; }
+.todo h3 + .todo-fila { border-top: 0; }
+.todo-ico { width: 32px; text-align: center; font-size: 20px; flex: none; }
+.todo-ico .fase-punto { display: inline-block; }
+.todo-txt { flex: 1; display: grid; min-width: 0; }
+.todo-txt small { color: var(--muted); font-size: 13px; }
+.todo-n { min-width: 26px; padding: 2px 8px; border-radius: 99px; background: var(--line); text-align: center; font-size: 13px; }
+.todo-n.aviso { background: #dc2626; color: #fff; }
+
+/* ---------- Ficha: acciones del parte en cuadrícula */
+.acc-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 10px; }
+.acc-grid > a, .acc-grid > button { display: grid; justify-items: center; align-content: center; gap: 4px; min-height: 70px; padding: 8px 4px; border: 1px solid var(--line);
+  border-radius: 12px; background: var(--bg); color: var(--text); font: inherit; font-size: 20px; text-decoration: none; cursor: pointer; text-align: center; }
+.acc-grid span { font-size: 12px; font-weight: 600; line-height: 1.15; }
+@media (max-width: 360px) { .acc-grid { grid-template-columns: repeat(3, 1fr); } }

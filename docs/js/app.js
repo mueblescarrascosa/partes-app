@@ -157,6 +157,87 @@ window.addEventListener("unhandledrejection", (ev) => { if (ev.reason?.avisado) 
 // ------------------------------------------------------------------ Copyright y versión
 const pieCopyright = () => `<footer class="copyright">© ${new Date().getFullYear()} ${esc(CFG.AUTOR || "Alfonso Carrascosa Martínez")} · Todos los derechos reservados<br>${CFG.IDEA ? "Idea original: " + esc(CFG.IDEA) + "<br>" : ""}${CFG.HECHA_CON ? esc(CFG.HECHA_CON) + "<br>" : ""}Partes · versión ${esc(CFG.VERSION || "")}${CFG.FECHA_VERSION ? " (" + esc(CFG.FECHA_VERSION) + ")" : ""}</footer>`;
 
+// ------------------------------------------------------------------ Barra de abajo (siempre a mano)
+// Partes · Hoy · Agenda · Facturación · Todo. No sale en los formularios (nuevo, editar, códigos, lote), para no salir sin querer.
+const SIN_TABBAR = ["nuevo", "editar", "lineas", "lote"];
+function pintarTabbar(ruta) {
+  let t = document.getElementById("tabbar");
+  if (SIN_TABBAR.includes(ruta)) { t?.remove(); document.body.classList.remove("con-tabbar"); return; }
+  if (!t) { t = document.createElement("nav"); t.id = "tabbar"; t.className = "tabbar"; document.body.appendChild(t); }
+  document.body.classList.add("con-tabbar");
+  const act = (r) => (r === ruta || (r === "" && ruta === "parte") ? "activo" : "");
+  const n = $("#nResumen")?.textContent || "";
+  t.innerHTML = `
+    <a href="#/" class="${act("")}">${I.home}<span>Partes</span></a>
+    <button type="button" id="tabHoy">${I.bell}<b class="badge" id="nResumen">${n}</b><span>Hoy</span></button>
+    <a href="#/agenda" class="${act("agenda")}">${I.cal}<span>Agenda</span></a>
+    ${esAdmin() ? `<a href="#/facturacion" class="${act("facturacion")}"><i class="tab-emoji">💶</i><span>Facturación</span></a>` : ""}
+    <a href="#/todo" class="${act("todo")}"><i class="tab-emoji">☰</i><span>Todo</span></a>`;
+  $("#tabHoy", t).onclick = async () => {
+    if (!S.partes?.length) { try { S.partes = await api.listarPartes(); } catch { /* lo que haya */ } }
+    sheetResumen(true);
+  };
+  if (S.partes?.length) sheetResumen(false, true);   // número de avisos al día
+}
+
+// ------------------------------------------------------------------ Todo: cada función de la app en un sitio, con buscador
+const sinAcentos = (t) => String(t || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
+function funcionesApp() {
+  const lector = esLector(), admin = esAdmin(), jefe = !!S.yo?.es_admin, real = api.modo === "supabase";
+  const f = admin && verPrecios() && S.partes?.length ? datosFacturacion() : null;
+  return [
+    { g: "Partes", i: "➕", t: "Nuevo parte", d: "Foto, PDF, varios a la vez, a mano o uno ya hecho", f: menuNuevo, si: !lector, k: "crear alta escanear subir foto pdf lote" },
+    { g: "Partes", i: "✅", t: "¿Están hechos?", d: "Revisar autorizados y citas pasadas", ir: "/revision", n: lector ? 0 : candidatosRevision().length, si: !lector, k: "revision realizados" },
+    { g: "Partes", i: "🔔", t: "Pendientes de hoy", d: "Citas, sin contactar, sin valorar, atascados…", f: () => sheetResumen(true), k: "resumen avisos" },
+    { g: "Partes", i: "📅", t: "Agenda de citas", d: "Las citas por día y zona", ir: "/agenda", k: "calendario visitas" },
+    { g: "Partes", i: "🗑", t: "Papelera", d: "Partes borrados: se pueden recuperar", ir: "/papelera", si: !lector, k: "borrados recuperar" },
+    { g: "Partes", i: "📤", t: "Exportar partes (CSV)", d: "Para abrirlos en Excel", f: exportarCSV, si: !lector, k: "excel descargar" },
+    { g: "Dinero", i: "💶", t: "Facturación mensual", d: "Relación del mes, facturas y cobros", ir: "/facturacion", n: f ? f.sinFacturarAnteriores.length : 0, si: admin, k: "factura cobro multibett relacion" },
+    { g: "Dinero", i: "📋", t: "Tarifa", d: "Códigos y precios", ir: "/tarifa", si: jefe, k: "codigos precios baremo" },
+    { g: "Ajustes y copias", i: "⚙️", t: "Ajustes y usuarios", d: "Empresa, mensajes, zonas, usuarios y permisos", ir: "/ajustes", si: jefe, k: "configuracion usuarios permisos empresa" },
+    { g: "Ajustes y copias", i: "💾", t: "Copia de seguridad", d: "Descarga los datos de todos los partes", f: copiaSeguridad, si: admin, k: "backup" },
+    { g: "Ajustes y copias", i: "🗂️", t: "Copia completa con archivos (ZIP)", d: "Datos, documentos, fotos y firmas", f: copiaCompleta, si: admin, k: "backup zip fotos" },
+    { g: "Mi cuenta", i: "🔑", t: "Cambiar contraseña", f: cambiarPassword, si: real, k: "clave password" },
+    { g: "Mi cuenta", i: "📲", t: "Instalar como app", d: "Icono en la pantalla de inicio", f: instalarApp, si: !yaInstalada(), k: "instalar" },
+    { g: "Mi cuenta", i: "👁", t: lector ? "Demo: volver a usuario normal" : "Demo: simular usuario de solo lectura", f: () => { sessionSet("demoLector", lector ? "0" : "1"); location.hash = "/"; router(); }, si: !real },
+    { g: "Mi cuenta", i: "🚪", t: "Cerrar sesión", f: async () => { await api.salir(); S.yo = null; router(); }, si: real, k: "salir" },
+  ].filter((x) => x.si !== false);
+}
+async function vistaTodo() {
+  if (!S.partes?.length) { try { S.partes = await api.listarPartes(); } catch { S.partes = []; } }
+  app.innerHTML = `
+  <header class="barra"><h1>Todo</h1><span class="sub">${esc(S.yo?.nombre || "")}</span></header>
+  <div class="buscador">${I.search}<input id="tBusca" type="search" placeholder="¿Qué buscas? Una función o un parte (nombre, expediente…)" autocomplete="off"></div>
+  <main class="todo" id="todo"></main>
+  ${pieCopyright()}`;
+  sheetResumen(false, true);   // número de avisos en «Hoy»
+  const fs = funcionesApp(), res = datosResumen().filter((x) => x.n && !x.accion);
+  const boton = (x, i) => `<button class="todo-fila" data-i="${i}"><span class="todo-ico">${x.i}</span><span class="todo-txt"><b>${esc(x.t)}</b>${x.d ? `<small>${esc(x.d)}</small>` : ""}</span>${x.n ? `<b class="todo-n">${x.n}</b>` : ""}</button>`;
+  const pinta = () => {
+    const q = sinAcentos($("#tBusca").value.trim());
+    const vale = (x) => !q || sinAcentos(`${x.g} ${x.t} ${x.d || ""} ${x.k || ""}`).includes(q);
+    const partes = q.length >= 2 ? (S.partes || []).filter((p) => sinAcentos([p.nombre, p.expediente, p.num_encargo, p.num_siniestro, p.direccion, p.poblacion, p.telefono, p.aseguradora].join(" ")).includes(q)).slice(0, 8) : [];
+    const grupos = [...new Set(fs.map((x) => x.g))];
+    const rs = res.filter((x) => !q || sinAcentos(x.t).includes(q));
+    $("#todo").innerHTML = `
+      ${partes.length ? `<section class="tarjeta"><h3>Partes</h3>${partes.map((p) => `<a class="todo-fila" href="#/parte/${p.id}"><span class="todo-ico"><i class="fase-punto" style="--c:${estadoInfo(p.estado).color}"></i></span><span class="todo-txt"><b>${esc(p.nombre || "Sin nombre")}</b><small>${esc([p.aseguradora, p.expediente, p.poblacion, estadoInfo(p.estado).nombre].filter(Boolean).join(" · "))}</small></span></a>`).join("")}</section>` : ""}
+      ${rs.length ? `<section class="tarjeta"><h3>Lo que tienes pendiente</h3>${rs.map((x) => `<button class="todo-fila" data-r="${res.indexOf(x)}"><span class="todo-txt"><b>${esc(x.t)}</b></span><b class="todo-n ${x.aviso ? "aviso" : ""}">${x.n}</b></button>`).join("")}</section>` : ""}
+      ${grupos.map((g) => { const xs = fs.filter((x) => x.g === g && vale(x)); return xs.length ? `<section class="tarjeta"><h3>${esc(g)}</h3>${xs.map((x) => boton(x, fs.indexOf(x))).join("")}</section>` : ""; }).join("")}
+      ${q && !partes.length && !rs.length && !fs.some(vale) ? '<div class="vacio">No hay nada con ese nombre.</div>' : ""}`;
+    $$("[data-i]", $("#todo")).forEach((b) => b.onclick = () => { const x = fs[b.dataset.i]; if (x.ir) location.hash = x.ir; else x.f(); });
+    $$("[data-r]", $("#todo")).forEach((b) => b.onclick = () => irAResumen(res[b.dataset.r]));
+  };
+  $("#tBusca").addEventListener("input", pinta);
+  pinta();
+}
+async function cambiarPassword() {
+  const pw = prompt("Nueva contraseña (mínimo 8 caracteres)");
+  if (!pw) return;
+  if (pw.length < 8) return toast("Mínimo 8 caracteres", "error");
+  await conCarga("Guardando…", () => api.cambiarPassword(pw));
+  toast("Contraseña cambiada", "ok"); cerrarSheet();
+}
+
 // ------------------------------------------------------------------ Router
 window.addEventListener("hashchange", router);
 async function router() {
@@ -179,11 +260,13 @@ async function router() {
   // Se apunta dónde estabas en la vista que dejas, y de dónde vienes al abrir una ficha
   const antes = document.body.dataset.vista;
   if (antes) S.scroll[antes] = window.scrollY;
-  if (ruta === "parte" && ["lista", "facturacion", "agenda", "revision"].includes(antes)) S.volverA = antes === "lista" ? "/" : "/" + antes;
-  if (ruta === "parte" && antes === "agenda") S.navIds = [];
+  if (ruta === "parte" && ["lista", "facturacion", "agenda", "revision", "todo"].includes(antes)) S.volverA = antes === "lista" ? "/" : "/" + antes;
+  if (ruta === "parte" && ["agenda", "todo"].includes(antes)) S.navIds = [];
   document.body.dataset.vista = ruta || "lista";
+  pintarTabbar(ruta || "");
   window.scrollTo(0, 0);
   if (!ruta) return vistaLista();
+  if (ruta === "todo") return vistaTodo();
   if (ruta === "nuevo") return vistaFormulario(null);
   if (ruta === "parte" && id) return vistaParte(id);
   if (ruta === "editar" && id) return vistaFormulario(id);
@@ -247,8 +330,6 @@ async function vistaLista() {
     <h1>Partes</h1>
     <div class="barra-acc">
       ${yaInstalada() ? "" : `<button class="btn peq instalar ${avisoInstalar ? "" : "oculto"}" id="btnInstalar">Instalar app</button>`}
-      <button class="icono" id="btnResumen" aria-label="Pendientes de hoy">${I.bell}<b class="badge" id="nResumen"></b></button>
-      <a class="icono" href="#/agenda" aria-label="Agenda">${I.cal}</a>
       <button class="icono" id="recargar" aria-label="Recargar">${I.refresh}</button>
       <button class="icono" id="menuUsuario" aria-label="Usuario">${I.user}</button>
     </div>
@@ -280,7 +361,6 @@ async function vistaLista() {
   $("#orden").addEventListener("change", (e) => { S.orden = e.target.value; sessionSet("orden", S.orden); pintarLista(); });
   $("#btnFiltros").addEventListener("click", sheetFiltros);
   $("#btnSel")?.addEventListener("click", () => { S.sel = S.sel ? null : new Set(); if (S.sel) toast("Toca los partes para elegirlos", "ok"); pintarLista(); });
-  $("#btnResumen").addEventListener("click", () => sheetResumen(true));
   $("#nuevo")?.addEventListener("click", menuNuevo);
   $("#recargar").addEventListener("click", cargarPartes);
   $("#menuUsuario").addEventListener("click", menuUsuario);
@@ -534,16 +614,17 @@ function sheetResumen(forzar, soloContador) {
     </div>
     <p class="suave">Pulsa una fila para ver esos partes. Este resumen sale una vez al día; puedes abrirlo con la campana 🔔.</p>
     <button class="btn texto ancho" data-cerrar>Cerrar</button>`);
-  $$(".res-fila", s).forEach((el) => el.addEventListener("click", () => {
-    const x = d[el.dataset.i];
-    if (x.ir) { cerrarSheet(); location.hash = x.ir; return; }
-    if (x.accion) { cerrarSheet(); x.accion(); return; }
-    if (x.k === "dias") { S.fx = { dias: "30" }; S.filtro = "activos"; }
-    else { S.fx = { [x.k]: x.v }; S.filtro = "todos"; }
-    S.filtroZona = ""; sessionSet("filtroZona", ""); sessionSet("filtro", S.filtro); guardarFx();
-    cerrarSheet();
-    if (location.hash.replace("#", "") !== "/" && location.hash !== "") location.hash = "/"; else pintarLista();
-  }));
+  $$(".res-fila", s).forEach((el) => el.addEventListener("click", () => irAResumen(d[el.dataset.i])));
+}
+// Una fila del resumen: abre su pantalla, hace su acción o filtra la lista con esos partes
+function irAResumen(x) {
+  cerrarSheet();
+  if (x.ir) { location.hash = x.ir; return; }
+  if (x.accion) { x.accion(); return; }
+  if (x.k === "dias") { S.fx = { dias: "30" }; S.filtro = "activos"; }
+  else { S.fx = { [x.k]: x.v }; S.filtro = "todos"; }
+  S.filtroZona = ""; sessionSet("filtroZona", ""); sessionSet("filtro", S.filtro); guardarFx();
+  if (location.hash.replace("#", "") !== "/" && location.hash !== "") location.hash = "/"; else pintarLista();
 }
 
 // ------------------------------------------------------------------ Agenda de citas
@@ -1387,13 +1468,7 @@ function menuUsuario() {
   $("#irAjustes", s)?.addEventListener("click", () => { cerrarSheet(); location.hash = "/ajustes"; });
   $("#irFact", s)?.addEventListener("click", () => { cerrarSheet(); location.hash = "/facturacion"; });
   $("#instalarMenu", s)?.addEventListener("click", instalarApp);
-  $("#cambiarPw", s)?.addEventListener("click", async () => {
-    const pw = prompt("Nueva contraseña (mínimo 8 caracteres)");
-    if (!pw) return;
-    if (pw.length < 8) return toast("Mínimo 8 caracteres", "error");
-    await conCarga("Guardando…", () => api.cambiarPassword(pw));
-    toast("Contraseña cambiada", "ok"); cerrarSheet();
-  });
+  $("#cambiarPw", s)?.addEventListener("click", cambiarPassword);
 }
 
 function exportarCSV() {
@@ -2282,9 +2357,18 @@ async function vistaParte(id) {
     <div class="lista-botones">
       ${sig && !esLector() ? `<button class="btn primario ancho" id="avanzar" style="--c:${sig.color}">Marcar como ${sig.nombre.toLowerCase()} →</button>` : ""}
       ${idx >= idxEstado("visitado") && !esLector() ? `<button class="btn primario ancho" id="informe" style="--c:#16a34a">${I.wa} ${esConexion(p) ? `Enviar ${p.cierre ? "fin de servicio" : p.estado === "realizado" ? "trabajo terminado" : "presupuesto"} al cliente` : `Enviar ${p.cierre ? "fin de servicio" : p.estado === "realizado" ? "trabajo terminado" : "visita"} a ${esc(DEST.nombre)}`}</button>` : ""}
-      <button class="btn ancho" id="nota">Añadir nota</button>
-      ${esLector() ? "" : '<button class="btn ancho" id="alTaller">📤 Enviar al taller</button>'}
-      ${!esLector() && p.estado !== "realizado" && !p.cierre ? '<button class="btn ancho" id="finServicio">🏁 Fin de servicio <small>(rechaza, anula, indemnización…)</small></button>' : ""}
+    </div>
+    <!-- Todo lo que se puede hacer con el parte, a la vista (antes había cosas escondidas en el menú ⋮) -->
+    <div class="acc-grid">
+      <button type="button" id="nota">📝<span>Nota</span></button>
+      ${esLector() ? "" : `
+      <button type="button" id="aEditar">✏️<span>Editar datos y cita</span></button>
+      <a href="#/lineas/${p.id}/${idx >= idxEstado("autorizado") ? "realizados" : "valoracion"}">📋<span>Códigos</span></a>
+      <button type="button" id="aFoto">📷<span>Fotos</span></button>
+      <button type="button" id="aInforme">📄<span>Informe / PDF</span></button>
+      <button type="button" id="alTaller">📤<span>Al taller</span></button>
+      <button type="button" id="aDoc">🔄<span>Documento</span></button>
+      ${p.estado !== "realizado" && !p.cierre ? '<button type="button" id="finServicio">🏁<span>Fin de servicio</span></button>' : ""}`}
     </div>
   </section>
 
@@ -2356,6 +2440,10 @@ async function vistaParte(id) {
   $("#informe")?.addEventListener("click", () => flujoInforme(p));
   $("#nota").onclick = () => sheetFase(p, null);
   $("#alTaller")?.addEventListener("click", () => sheetTaller(p));
+  $("#aEditar")?.addEventListener("click", () => (location.hash = "/editar/" + p.id));
+  $("#aFoto")?.addEventListener("click", () => sheetFotos(p));
+  $("#aInforme")?.addEventListener("click", () => flujoInforme(p));
+  $("#aDoc")?.addEventListener("click", () => releerDocumento(p));
   $("#cambiarFechaR")?.addEventListener("click", () => sheetFechaRealizado(p, () => vistaParte(p.id)));
   $("#finServicio")?.addEventListener("click", () => sheetCierre(p));
   $("#editarCierre")?.addEventListener("click", () => sheetCierre(p));
