@@ -3132,9 +3132,9 @@ async function sheetCierre(p) {
     if (F.motivo.value === "otro" && !F.motivo_txt.value.trim()) return toast("Di el motivo", "error");
     if (!puedeCambiarFacturado(p, "el fin de servicio y lo que se factura")) return;
     const cierre = { motivo: F.motivo.value, motivo_txt: F.motivo.value === "otro" ? F.motivo_txt.value.trim() : null, nota: F.nota.value.trim() || null, facturar: lineas.length > 0,
-      fecha: new Date().toISOString(), estado_antes: c.estado_antes ?? p.estado, lineas_antes: c.lineas_antes !== undefined ? c.lineas_antes : (p.lineas_realizadas || null) };
+      fecha: new Date().toISOString(), estado_antes: c.estado_antes ?? p.estado, lineas_antes: c.lineas_antes !== undefined ? c.lineas_antes : (p.lineas_realizadas || []) };
     const dia = F.dia.value;
-    const cambios = { cierre, estado: "realizado", realizado_at: dia && dia !== hoyDia() ? diaAISO(dia) : new Date().toISOString(), lineas_realizadas: lineas.length ? lineas : null };
+    const cambios = { cierre, estado: "realizado", realizado_at: dia && dia !== hoyDia() ? diaAISO(dia) : new Date().toISOString(), lineas_realizadas: lineas };   // la columna no admite null: sin nada que facturar va vacía
     const btn = ev.target.querySelector("[type=submit]"); btn.disabled = true; $("#fError", s).hidden = true;
     try {
       await conCarga("Guardando…", async () => {
@@ -3161,7 +3161,7 @@ async function reabrirParte(p) {
   if (!puedeCambiarFacturado(p, "el fin de servicio (se reabre el parte)")) return;
   try {
     await conCarga("Reabriendo…", async () => {
-      await api.actualizarParte(p.id, { cierre: null, estado: antes.id, realizado_at: null, lineas_realizadas: c.lineas_antes ?? null });
+      await api.actualizarParte(p.id, { cierre: null, estado: antes.id, realizado_at: null, lineas_realizadas: c.lineas_antes || [] });
       await api.anadirEvento(p.id, antes.id, `Reabierto: se deshace el fin de servicio (${textoCierre(c)}).`);
     });
   } catch { toast("No se ha podido reabrir. Revisa la conexión.", "error"); return; }
