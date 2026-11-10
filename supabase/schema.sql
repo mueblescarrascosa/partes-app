@@ -673,6 +673,9 @@ grant execute on function public.datos_en_otras_apps(uuid) to service_role;
 --  Vuelta atrás: rollback_factura_enviada.sql
 -- =====================================================================
 alter table public.partes add column if not exists factura_enviada boolean;
+-- Mes de factura (10/11/2026, migracion_mes_factura.sql): 'AAAA-MM'; vacío = el mes de realizado_at
+alter table public.partes add column if not exists mes_factura text
+  check (mes_factura is null or mes_factura ~ '^\d{4}-(0[1-9]|1[0-2])$');
 comment on column public.partes.factura_enviada is
   'true = la relación se envió (fecha: facturado_at); false = solo se marcó como facturado; null = no consta (facturas anteriores a la 2.17.0) o sin facturar';
 

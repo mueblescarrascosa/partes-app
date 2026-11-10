@@ -1187,12 +1187,21 @@ function sheetFechaRealizado(p, alGuardar) {
       await conCarga("Guardando…", () => api.actualizarParte(p.id, { realizado_at }));
       await anotarCambioFacturado(p, "la fecha de terminado");
       p.realizado_at = realizado_at;
-      toast(`Fecha cambiada: cuenta en ${nombreMes(mesDe(realizado_at)).toLowerCase()}`, "ok");
+      toast(`Fecha cambiada: cuenta en ${nombreMes(mesEfectivo(p)).toLowerCase()}`, "ok");
       alGuardar?.();
     } catch { /* conCarga avisa */ }
   });
 }
 const mesDe = (iso) => iso ? new Date(iso).toLocaleDateString("sv-SE").slice(0, 7) : "";
+// El mes en que se factura: el elegido a mano o, si no hay, el mes en que se terminó.
+const mesEfectivo = (p) => p.mes_factura || mesDe(p.realizado_at);
+function selectorMesFactura(p) {
+  const base = new Date(); base.setDate(15);
+  const meses = [];
+  for (let d = 2; d >= -6; d--) { const m = new Date(base); m.setMonth(base.getMonth() + d); meses.push(m.toLocaleDateString("sv-SE").slice(0, 7)); }
+  if (p.mes_factura && !meses.includes(p.mes_factura)) meses.push(p.mes_factura);
+  return `<select class="fact-mes" data-mesfact="${p.id}" aria-label="Mes de factura"><option value="">Mes en que se terminó</option>${meses.map((m) => `<option value="${m}" ${m === p.mes_factura ? "selected" : ""}>Facturar en ${nombreMes(m).toLowerCase()}</option>`).join("")}</select>`;
+}
 const nombreMes = (k) => { const [a, m] = k.split("-"); const t = new Date(+a, +m - 1, 1).toLocaleDateString("es-ES", { month: "long", year: "numeric" }); return t.charAt(0).toUpperCase() + t.slice(1); };
 const sumarDias = (fecha, d) => { const x = new Date(fecha + "T12:00:00"); x.setDate(x.getDate() + d); return x; };
 
@@ -1200,7 +1209,7 @@ function datosFacturacion() {
   // Los cerrados sin facturar nada (fin de servicio) no van a la facturación
   const term = (S.partes || []).filter((p) => p.estado === "realizado" && !esConexion(p) && !(p.cierre && !p.cierre.facturar));
   const mesActual = mesDe(new Date().toISOString());
-  const sinFacturarAnteriores = term.filter((p) => !p.factura_ref && p.realizado_at && mesDe(p.realizado_at) < mesActual);
+  const sinFacturarAnteriores = term.filter((p) => !p.factura_ref && p.realizado_at && mesEfectivo(p) < mesActual);
   const facturas = new Map();
   for (const p of term.filter((x) => x.factura_ref)) {
     const k = p.factura_ref + "|" + (p.facturado_at || "");
@@ -1232,9 +1241,9 @@ async function vistaFacturacion() {
   $("#volver").onclick = () => (location.hash = "/");
   const pinta = () => {
     const { term, sinFacturarAnteriores, facturas } = datosFacturacion();
-    const meses = [...new Set([mesDe(new Date().toISOString()), ...term.map((p) => mesDe(p.realizado_at)).filter(Boolean)])].sort().reverse();
+    const meses = [...new Set([mesDe(new Date().toISOString()), ...term.map(mesEfectivo).filter(Boolean)])].sort().reverse();
     if (!meses.includes(mes)) mes = meses[0];
-    const delMes = term.filter((p) => mesDe(p.realizado_at) === mes).sort((a, b) => (a.realizado_at || "").localeCompare(b.realizado_at || ""));
+    const delMes = term.filter((p) => mesEfectivo(p) === mes).sort((a, b) => (a.realizado_at || "").localeCompare(b.realizado_at || ""));
     if (!sel.size) delMes.filter((p) => !p.factura_ref).forEach((p) => sel.add(p.id));
     const elegidos = delMes.filter((p) => sel.has(p.id));
     const total = elegidos.reduce((a, p) => a + (importeParte(p) || 0), 0);
@@ -1250,7 +1259,7 @@ async function vistaFacturacion() {
       return `<div class="fact-fila ${p.factura_ref ? "facturado" : ""}" data-fila="${p.id}">
         <label class="fact-check"><input type="checkbox" data-id="${p.id}" ${sel.has(p.id) ? "checked" : ""}></label>
         <span class="fact-info" data-desplegar="${p.id}"><b>${esc(p.nombre || "Sin nombre")} <i class="fact-flecha">${abiertos.has(p.id) ? "▾" : "▸"}</i></b><small><button type="button" class="fecha-btn" data-fecha="${p.id}" title="Cambiar la fecha">📅 ${fFecha(p.realizado_at)}</button> · ${esc(p.aseguradora || "")} ${esc(p.expediente || "")}</small><small class="fact-dir">📍 ${esc([p.direccion, [p.codigo_postal, p.poblacion].filter(Boolean).join(" "), p.provincia].filter(Boolean).join(", ") || "Sin dirección")}</small>${est}</span>
-        <span class="fact-der"><b class="fact-imp ${imp == null ? "sin" : ""}">${imp == null ? "sin importe" : fEuros(imp)}</b><a class="btn peq fact-ver" href="#/parte/${p.id}" data-ver="${p.id}">Ver ›</a></span>
+        <span class="fact-der"><b class="fact-imp ${imp == null ? "sin" : ""}">${imp == null ? "sin importe" : fEuros(imp)}</b><a class="btn peq fact-ver" href="#/parte/${p.id}" data-ver="${p.id}">Ver ›</a>${selectorMesFactura(p)}</span>
         ${abiertos.has(p.id) ? `<div class="fact-lineas">${ls.length ? ls.map((l) => `<div><span><b>${esc(l.codigo || "—")}</b> ${esc(l.descripcion || "")}</span><span>${Number(l.cantidad) || 0}×<span class="precio"> ${fEuros(importeLinea(l))}</span></span></div>`).join("") : `<p class="suave">Sin códigos. ${esc((p.averia || "").slice(0, 140))}</p>`}</div>` : ""}
       </div>`;
     };
@@ -1284,6 +1293,19 @@ async function vistaFacturacion() {
           <button class="btn peq texto" data-descobrar="${esc(f.ref)}|${esc(f.fecha || "")}">Deshacer</button></div>`).join("")}
       </section>`;
     $("#fMes").onchange = (e) => { mes = e.target.value; sessionSet("factMes", mes); sel.clear(); pinta(); };
+    $$("#fact [data-mesfact]").forEach((s) => s.addEventListener("change", async () => {
+      const p = term.find((x) => x.id === s.dataset.mesfact); if (!p) return;
+      const v = s.value || null;
+      if (!puedeCambiarFacturado(p, "el mes de factura")) { s.value = p.mes_factura || ""; return; }
+      try {
+        await conCarga("Guardando…", () => api.actualizarParte(p.id, { mes_factura: v }));
+        p.mes_factura = v;
+        await anotarCambioFacturado(p, "el mes de factura");
+        try { await api.anadirEvento(p.id, null, v ? `Mes de factura: ${nombreMes(v).toLowerCase()}` : "Mes de factura: el mes en que se terminó"); } catch { /* no impide el cambio */ }
+        sel.delete(p.id);
+        pinta();
+      } catch { s.value = p.mes_factura || ""; }
+    }));
     $$("#fact .fecha-btn").forEach((b) => b.addEventListener("click", (e) => {
       e.preventDefault(); e.stopPropagation();
       const p = term.find((x) => x.id === b.dataset.fecha); if (p) sheetFechaRealizado(p, () => pinta());
