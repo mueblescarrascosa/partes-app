@@ -88,6 +88,8 @@ input:focus, select:focus, textarea:focus { outline: 2px solid #2563eb; outline-
 .tres { display: grid; grid-template-columns: 90px 1fr 1fr; gap: 10px; }
 @media (max-width: 380px) { .tres { grid-template-columns: 1fr 1fr; } .tres label:first-child { grid-column: span 2; } }
 .pie-form { display: grid; grid-template-columns: 1fr 2fr; gap: 10px; padding: 4px 12px 24px; }
+/* En los formularios a pantalla completa, Guardar queda siempre a la vista */
+.form > .pie-form { position: sticky; bottom: 0; z-index: 5; padding: 10px 12px calc(10px + env(safe-area-inset-bottom)); background: linear-gradient(to top, var(--bg) 75%, transparent); }
 .sheet .pie-form { padding: 12px 0 0; }
 .sheet .form label { margin-bottom: 12px; }
 label.btn { color: var(--text); font-size: 16px; display: flex; }
@@ -318,6 +320,8 @@ h4.cat { margin: 14px 4px 2px; font-size: 12px; text-transform: uppercase; color
 /* Facturación */
 .fact { padding: 0 0 40px; }
 .fact > .aviso-rojo { margin: 12px; }
+.aviso-meses { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.aviso-meses .btn { width: auto; flex: 0 0 auto; background: #fff; color: #991b1b; border-color: #fca5a5; }
 .fact select#fMes { width: auto; }
 .fact-lista { display: grid; gap: 4px; }
 .fact-fila { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; padding: 8px 4px; border-top: 1px solid var(--borde, #e2e8f0); font-size: 14px; }

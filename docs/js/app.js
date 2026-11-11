@@ -1266,7 +1266,8 @@ async function vistaFacturacion() {
     };
     const porFacturar = delMes.filter((p) => !p.factura_ref), yaFacturados = delMes.filter((p) => p.factura_ref);
     $("#fact").innerHTML = `
-      ${sinFacturarAnteriores.length ? `<div class="aviso-rojo">🧾 Hay <b>${sinFacturarAnteriores.length}</b> parte(s) terminados en meses anteriores sin facturar (${[...new Set(sinFacturarAnteriores.map((p) => nombreMes(mesDe(p.realizado_at))))].join(", ")}).</div>` : ""}
+      ${sinFacturarAnteriores.length ? `<div class="aviso-rojo">🧾 Hay <b>${sinFacturarAnteriores.length}</b> parte(s) terminados en meses anteriores sin facturar:
+        <span class="aviso-meses">${[...new Set(sinFacturarAnteriores.map(mesEfectivo))].sort().map((m) => `<button type="button" class="btn peq" data-irmes="${m}" title="${nombreMes(m)}">${nombreMes(m).replace(/^(\S{3})\S* de (\d{4})$/, "$1 $2")} (${sinFacturarAnteriores.filter((p) => mesEfectivo(p) === m).length}) ›</button>`).join("")}</span></div>` : ""}
       <section class="tarjeta">
         <div class="h3-fila"><h3>Terminados en</h3>
           <select id="fMes">${meses.map((m) => `<option value="${m}" ${m === mes ? "selected" : ""}>${nombreMes(m)}</option>`).join("")}</select></div>
@@ -1294,6 +1295,7 @@ async function vistaFacturacion() {
           <button class="btn peq texto" data-descobrar="${esc(f.ref)}|${esc(f.fecha || "")}">Deshacer</button></div>`).join("")}
       </section>`;
     $("#fMes").onchange = (e) => { mes = e.target.value; sessionSet("factMes", mes); sel.clear(); pinta(); };
+    $$("#fact [data-irmes]").forEach((b) => (b.onclick = () => { mes = b.dataset.irmes; sessionSet("factMes", mes); sel.clear(); pinta(); }));
     $$("#fact [data-mesfact]").forEach((s) => s.addEventListener("change", async () => {
       const p = term.find((x) => x.id === s.dataset.mesfact); if (!p) return;
       const v = s.value || null;
@@ -2079,6 +2081,16 @@ function irANuevo() {
 }
 
 // Conexión: la IA lo marca si el parte lo dice; en Mapfre, además, el expediente empieza por A (los encargos, por V)
+// Aseguradora según la forma del expediente (la misma regla que usa la app de facturas)
+function asegDeExpediente(exp) {
+  const e = String(exp || "").trim().toUpperCase();
+  if (/^AS\.\s*\d/.test(e)) return "Asyrep";
+  if (/^IM\s*\d/.test(e)) return "Iris Global";
+  if (/^V\s*\d/.test(e)) return "Mapfre";
+  if (/^91\d{5,}$/.test(e)) return "Santalucía";
+  return "";
+}
+
 function detectarTipo(r) {
   if (/conexi/i.test(r.tipo || "")) return "conexion";
   if (r.aseguradora === "Mapfre" && /^A[\s-]?\d/i.test((r.expediente || "").trim())) return "conexion";
@@ -2164,6 +2176,8 @@ async function vistaFormulario(id) {
   else {
     if (!S.borrador) S.borrador = { datos: {} };
     p = { ...S.borrador.datos, asignado_a: S.yo.user_id };
+    // Parte a mano: la fecha de encargo es hoy salvo que se cambie
+    if (!p.fecha_encargo && !S.borrador.archivo) p.fecha_encargo = new Date().toLocaleDateString("sv-SE");
   }
   const opcAseg = [...new Set([...CFG.ASEGURADORAS, p.aseguradora].filter(Boolean))];
   const campo = (n, label, tipo = "text", extra = "") =>
@@ -2239,6 +2253,11 @@ async function vistaFormulario(id) {
   if (!id && S.borrador?.archivo) S.antesDeSalir = () => confirm("Se perderán los datos leídos de este parte. ¿Salir sin guardar?");
   $("#volver").onclick = $("#cancelar").onclick = () => { if (S.antesDeSalir && !S.antesDeSalir()) return; S.antesDeSalir = null; history.back(); };
   if (!id && (S.borrador?.archivo || S.fotosPendientes?.length)) avisoRepetido(p);
+  // Sin aseguradora elegida, se deduce por la forma del expediente (V… Mapfre, IM… Iris, 91… Santalucía, AS. Asyrep)
+  $("#fParte [name=expediente]").addEventListener("change", () => {
+    const sa = $("#fParte [name=aseguradora]"), a = asegDeExpediente($("#fParte [name=expediente]").value);
+    if (!sa.value && a && [...sa.options].some((o) => o.value === a)) { sa.value = a; sa.dispatchEvent(new Event("change")); toast(`Aseguradora: ${a} (por el nº de expediente)`); }
+  });
   // Mapfre con expediente que empieza por A → Conexión
   $$("#fParte [name=expediente], #fParte [name=aseguradora]").forEach((el) => el.addEventListener("change", () => {
     const f = Object.fromEntries(new FormData($("#fParte")));
