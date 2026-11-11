@@ -43,7 +43,7 @@ const app = $("#app");
 const S = {
   yo: null, miembros: [], partes: [],
   filtro: sessionGet("filtro") ?? "activos", busqueda: "", vista: sessionGet("vista") === "compacta" ? "compacta" : "tarjetas",
-  orden: sessionGet("orden") ?? "recientes", filtroAseg: sessionGet("filtroAseg") ?? "", filtroZona: sessionGet("filtroZona") ?? "", fx: (() => { try { return JSON.parse(sessionGet("fx") || "{}"); } catch { return {}; } })(),
+  orden: sessionGet("orden") ?? "recientes", filtroAseg: sessionGet("filtroAseg") ?? "", filtroZona: sessionGet("filtroZona") ?? "", fx: (() => { try { const fx = JSON.parse(sessionGet("fx") || "{}"); delete fx.dias; delete fx.entrada; delete fx.cita; return fx; } catch { return {}; } })(),   // al abrir, sin filtros de tiempo
   borrador: null, // parte nuevo pendiente de guardar {datos, archivo, mime}
   scroll: {},      // posición de cada vista al salir de ella, para volver al mismo sitio
   volverA: "/",    // a dónde lleva "volver" desde la ficha (lista, facturación, agenda…)
@@ -378,16 +378,16 @@ async function cargarPartes() {
 }
 
 function pintarLista() {
-  const q = S.busqueda.trim().toLowerCase();
+  // Al buscar: sin distinguir tildes ni mayúsculas, y en TODOS los partes (los filtros son solo para mirar la lista)
+  const q = sinAcentos(S.busqueda.trim());
   let base = S.partes;
-  if (S.filtroAseg) base = base.filter((p) => p.aseguradora === S.filtroAseg);
+  if (!q && S.filtroAseg) base = base.filter((p) => p.aseguradora === S.filtroAseg);
   const baseSinZona = base;
-  if (S.filtroZona) base = base.filter((p) => (zonaDe(p) || "-") === S.filtroZona);
-  base = base.filter(pasaFiltrosExtra);
+  if (!q && S.filtroZona) base = base.filter((p) => (zonaDe(p) || "-") === S.filtroZona);
+  if (!q) base = base.filter(pasaFiltrosExtra);
   pintarFiltrosActivos();
   if (q) base = base.filter((p) =>
-    [p.nombre, p.expediente, p.num_encargo, p.num_siniestro, p.direccion, p.poblacion, p.telefono, p.aseguradora, p.averia, p.poliza]
-      .some((v) => String(v ?? "").toLowerCase().includes(q)));
+    sinAcentos([p.nombre, p.expediente, p.num_encargo, p.num_siniestro, p.direccion, p.poblacion, p.telefono, p.aseguradora, p.averia, p.poliza].join(" | ")).includes(q));
 
   const cuenta = (id) => base.filter((p) => p.estado === id).length;
   const chips = [
@@ -408,7 +408,8 @@ function pintarLista() {
   $$("#chipsZona .chip").forEach((b) => b.addEventListener("click", () => { S.filtroZona = b.dataset.z; sessionSet("filtroZona", S.filtroZona); pintarLista(); }));
 
   let lista = base;
-  if (S.filtro === "activos") lista = base.filter((p) => p.estado !== "realizado");
+  if (q) { /* buscando: todas las fases */ }
+  else if (S.filtro === "activos") lista = base.filter((p) => p.estado !== "realizado");
   else if (S.filtro !== "todos") lista = base.filter((p) => p.estado === S.filtro);
 
   const ordenes = {
@@ -423,11 +424,11 @@ function pintarLista() {
   // Orden de la lista para "‹ Anterior · Siguiente ›" en la ficha
   S.navIds = lista.map((p) => p.id);
   const nombreOrden = { fase: "por fase", recientes: "últimos movidos", antiguos: "más días primero", cita: "próxima cita", nuevos: "últimos entrados" };
-  $("#resLista").textContent = lista.length ? `${lista.length} ${lista.length === 1 ? "parte" : "partes"} · ${nombreOrden[S.orden] || nombreOrden.recientes}` : "";
+  $("#resLista").textContent = lista.length ? `${lista.length} ${lista.length === 1 ? "parte" : "partes"} · ${q ? "buscando en todos (sin filtros)" : nombreOrden[S.orden] || nombreOrden.recientes}` : "";
 
   const cont = $("#lista");
   if (!lista.length) {
-    cont.innerHTML = `<div class="vacio">${S.partes.length ? "No hay partes con este filtro." : esLector() ? "Aún no hay partes." : "Aún no hay partes.<br>Pulsa <b>+</b> para escanear el primero."}</div>`;
+    cont.innerHTML = `<div class="vacio">${S.partes.length ? (q ? "Ningún parte coincide con la búsqueda." : "No hay partes con este filtro.") : esLector() ? "Aún no hay partes." : "Aún no hay partes.<br>Pulsa <b>+</b> para escanear el primero."}</div>`;
     return;
   }
   const pinta = S.vista === "compacta" ? filaParte : tarjetaParte;
