@@ -2062,6 +2062,7 @@ async function guardarLote() {
       const rep = await analizarRepeticion(f).catch(() => null);
       if (rep?.identico) { it.estado = "error"; it.error = "ya existía igual; no se ha guardado"; fallos++; continue; }
       if (rep) { f.repetido_de = rep.orig.id; f.cambios_repetido = rep.diffs.map((x) => x.txt).join(" · "); }
+      await cargarTarifa();
       const n = await api.crearParte(conLineasIA({ ...f, asignado_a: S.yo?.user_id ?? null, datos_ia: it.datos }, it.datos));
       const ext = it.mime === "application/pdf" ? "pdf" : "jpg";
       const path = await api.subirArchivo(`${n.id}/documento.${ext}`, it.blob, it.mime);
@@ -2114,9 +2115,23 @@ const aMayus = (o) => {
   return o;
 };
 
-// Si el parte trae códigos con precio, viene valorado y autorizado: se guardan en ambas
+// Los partes que llegan valorados (p. ej. Santalucía) traen el código pero no el precio: se pone el de la tarifa.
+// Devuelve las líneas (copias) y cuántas se han rellenado. Las que ya tienen precio no se tocan.
+function conPrecioTarifa(ls) {
+  let n = 0;
+  const lineas = (ls || []).map((l) => {
+    if (!l || Number(l.precio) || !l.codigo) return l;
+    const t = (S.tarifa || []).find((c) => c.codigo === l.codigo);
+    if (!t || !Number(t.precio)) return l;
+    n++;
+    return { ...l, precio: Number(t.precio), descripcion: l.descripcion || t.descripcion || "" };
+  });
+  return { lineas, n };
+}
+
+// Si el parte trae códigos, viene valorado y autorizado: se guardan en ambas (sin precio, con el de la tarifa)
 function conLineasIA(f, datos) {
-  const ls = (datos?.lineas || []).filter((l) => l && (l.codigo || l.descripcion));
+  const ls = conPrecioTarifa((datos?.lineas || []).filter((l) => l && (l.codigo || l.descripcion))).lineas;
   if (!ls.length) return f;
   const base = totalesLineas(ls).base;
   f.lineas_valoracion = ls; f.importe_valorado = base;
@@ -2306,6 +2321,7 @@ async function vistaFormulario(id) {
           f.cambios_repetido = rep.diffs.map((x) => x.txt).join(" · ");
         }
         const nuevo = await conCarga("Guardando…", async () => {
+          await cargarTarifa();
           const n = await api.crearParte(conLineasIA({ ...f, datos_ia: S.borrador?.archivo ? S.borrador.datos : null }, S.borrador?.datos));
           if (S.borrador?.archivo) {
             const ext = S.borrador.mime === "application/pdf" ? "pdf" : "jpg";
@@ -3418,7 +3434,10 @@ async function vistaLineas(id, tipo) {
   const origen = tipo === "realizados" ? ((p.lineas_autorizadas || []).length ? ["lineas_autorizadas", "autorizados"] : ["lineas_valoracion", "de la valoración"])
     : tipo === "autorizados" ? ["lineas_valoracion", "de la valoración"] : null;
   if (origen && !lineas.length && (p[origen[0]] || []).length) { lineas = JSON.parse(JSON.stringify(p[origen[0]])); copiado = origen[1]; }
-  let sucio = copiado;
+  // Códigos que llegaron sin precio: se les pone el de la tarifa (hay que guardar para que quede).
+  const conPrecio = conPrecioTarifa(lineas);
+  lineas = conPrecio.lineas;
+  let sucio = copiado || conPrecio.n > 0;
 
   app.innerHTML = `
   <header class="barra">
@@ -3426,6 +3445,7 @@ async function vistaLineas(id, tipo) {
     <h1>${tipo === "realizados" ? "Trabajos realizados" : tipo === "autorizados" ? "Autorizar" : "Valoración"} <small class="sub">${esc(p.expediente || "")}</small></h1>
     <button class="btn peq guardar" id="guardarL">${tipo === "autorizados" && idxEstado(p.estado) < idxEstado("autorizado") ? "Autorizar" : "Guardar"}</button>
   </header>
+  ${conPrecio.n ? `<div class="aviso">${conPrecio.n === 1 ? "Un código venía" : `${conPrecio.n} códigos venían`} sin precio: te pongo el de la tarifa. Revísalo y guarda.</div>` : ""}
   ${copiado ? `<div class="aviso">He copiado los códigos ${copiado}. ${tipo === "autorizados" ? "Quita o añade lo que no te hayan autorizado y pulsa arriba. Esto es lo que se factura." : "Cambia solo lo que haya variado y guarda."}</div>` : ""}
   <div class="buscador">${I.search}<input id="bT" type="search" placeholder="Código o descripción (p.ej. 5108, rodapié, galce)" autocomplete="off"></div>
   <div class="chips cats" id="catsT"></div>
@@ -3474,6 +3494,7 @@ async function vistaLineas(id, tipo) {
   // Si un código "1ª Ud." pasa de 1 unidad, el resto va a su "Ud. adicional"
   const sumarLinea = (c, n) => {
     const ex = lineas.find((l) => l.codigo === c.codigo);
+    if (ex && !Number(ex.precio) && Number(c.precio)) ex.precio = Number(c.precio);   // venía sin precio
     if (ex) ex.cantidad = Math.round(((Number(ex.cantidad) || 0) + n) * 100) / 100;
     else lineas.push({ codigo: c.codigo, descripcion: c.descripcion, cantidad: n, precio: Number(c.precio), dto: 0 });
   };
