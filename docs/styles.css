@@ -452,6 +452,7 @@ body.con-sel .lista { padding-bottom: 90px; }
 .fila-txt small { color: var(--muted); font-size: 12px; }
 .fila-cita { flex: none; color: var(--muted); font-size: 12px; }
 @media (max-width: 380px) { .fila-cita { display: none; } }
+.fila-imp { flex: none; color: #16a34a; font-size: 12px; font-weight: 600; white-space: nowrap; }
 /* Bocetos y fotos: el texto de "vacío" ocupa todo el ancho, no una columna */
 .fotos > p { grid-column: 1 / -1; margin: 0; }
 .fase-punto { flex: none; width: 10px; height: 10px; border-radius: 50%; background: var(--c); }

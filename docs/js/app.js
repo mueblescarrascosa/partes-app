@@ -220,7 +220,7 @@ async function vistaTodo() {
     const grupos = [...new Set(fs.map((x) => x.g))];
     const rs = res.filter((x) => !q || sinAcentos(x.t).includes(q));
     $("#todo").innerHTML = `
-      ${partes.length ? `<section class="tarjeta"><h3>Partes</h3>${partes.map((p) => `<a class="todo-fila" href="#/parte/${p.id}"><span class="todo-ico"><i class="fase-punto" style="--c:${estadoInfo(p.estado).color}"></i></span><span class="todo-txt"><b>${esc(p.nombre || "Sin nombre")}</b><small>${esc([p.aseguradora, p.expediente, p.poblacion, estadoInfo(p.estado).nombre].filter(Boolean).join(" · "))}</small></span></a>`).join("")}</section>` : ""}
+      ${partes.length ? `<section class="tarjeta"><h3>Partes</h3>${partes.map((p) => `<a class="todo-fila" href="#/parte/${p.id}"><span class="todo-ico"><i class="fase-punto" style="--c:${estadoInfo(p.estado).color}"></i></span><span class="todo-txt"><b>${esc(tituloParte(p))}</b><small>${esc([p.aseguradora, p.expediente, p.poblacion, estadoInfo(p.estado).nombre].filter(Boolean).join(" · "))}</small></span></a>`).join("")}</section>` : ""}
       ${rs.length ? `<section class="tarjeta"><h3>Lo que tienes pendiente</h3>${rs.map((x) => `<button class="todo-fila" data-r="${res.indexOf(x)}"><span class="todo-txt"><b>${esc(x.t)}</b></span><b class="todo-n ${x.aviso ? "aviso" : ""}">${x.n}</b></button>`).join("")}</section>` : ""}
       ${grupos.map((g) => { const xs = fs.filter((x) => x.g === g && vale(x)); return xs.length ? `<section class="tarjeta"><h3>${esc(g)}</h3>${xs.map((x) => boton(x, fs.indexOf(x))).join("")}</section>` : ""; }).join("")}
       ${q && !partes.length && !rs.length && !fs.some(vale) ? '<div class="vacio">No hay nada con ese nombre.</div>' : ""}`;
@@ -656,7 +656,7 @@ async function vistaAgenda() {
     const item = (p) => `
       <div class="ag-item" data-id="${p.id}">
         <div class="ag-hora">${p.fecha_cita ? new Date(p.fecha_cita).toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" }) : "—"}</div>
-        <div class="ag-info"><b>${esc(p.nombre || "Sin nombre")}</b><small>${esc(dirDe(p) || "Sin dirección")}${zonaDe(p) ? ` · ${esc(zonaDe(p))}` : ""}</small>
+        <div class="ag-info"><b>${esc(tituloParte(p))}</b><small>${esc(dirDe(p) || "Sin dirección")}${zonaDe(p) ? ` · ${esc(zonaDe(p))}` : ""}</small>
           <small>${esc(p.aseguradora || "")} ${esc(p.expediente || "")} · ${estadoInfo(p.estado).nombre}</small></div>
         <div class="ag-acc">
           ${p.telefono ? `<a class="mini tel" href="${linkLlamar(p.telefono)}" aria-label="Llamar">${I.phone}</a>` : ""}
@@ -1130,8 +1130,8 @@ async function vistaRevision() {
       <section class="tarjeta rev-card">
         <div class="parte-top"><span class="aseg" style="--ase:${colorAseg(p.aseguradora)}">${esc(p.aseguradora || "")}</span><span class="exp">${esc(p.expediente || "")}</span>
           <span class="estado" style="--c:${estadoInfo(p.estado).color}">${estadoInfo(p.estado).nombre}</span></div>
-        <div class="parte-nombre">${esc(p.nombre || "Sin nombre")}</div>
-        <div class="parte-dir">${esc([p.direccion, p.poblacion].filter(Boolean).join(", "))}</div>
+        <div class="parte-nombre">${esc(tituloParte(p))}</div>
+        <div class="parte-dir">${esc([p.nombre ? p.direccion : "", p.poblacion].filter(Boolean).join(", "))}</div>
         ${p.averia ? `<div class="parte-averia">${esc(p.averia)}</div>` : ""}
         <p class="suave">${p.fecha_cita ? `Última cita: ${fFechaHora(p.fecha_cita)} · ` : ""}Último cambio ${hace(p.updated_at)}${avisosHecho(p).length ? ` · <span class="rojo">⚠️ ${avisosHecho(p).join(", ")}</span>` : ""}</p>
         <label>Fecha del trabajo<input type="date" id="revDia" value="${fechaPropuesta(p)}" max="${hoyDia()}"></label>
@@ -1259,7 +1259,7 @@ async function vistaFacturacion() {
         + (p.factura_ref ? `<button type="button" class="quitar-fact" data-quitar="${p.id}">Quitar de la factura</button>` : "");
       return `<div class="fact-fila ${p.factura_ref ? "facturado" : ""}" data-fila="${p.id}">
         <label class="fact-check"><input type="checkbox" data-id="${p.id}" ${sel.has(p.id) ? "checked" : ""}></label>
-        <span class="fact-info" data-desplegar="${p.id}"><b>${esc(p.nombre || "Sin nombre")} <i class="fact-flecha">${abiertos.has(p.id) ? "▾" : "▸"}</i></b><small><button type="button" class="fecha-btn" data-fecha="${p.id}" title="Cambiar la fecha">📅 ${fFecha(p.realizado_at)}</button> · ${esc(p.aseguradora || "")} ${esc(p.expediente || "")}</small><small class="fact-dir">📍 ${esc([p.direccion, [p.codigo_postal, p.poblacion].filter(Boolean).join(" "), p.provincia].filter(Boolean).join(", ") || "Sin dirección")}</small>${est}</span>
+        <span class="fact-info" data-desplegar="${p.id}"><b>${esc(tituloParte(p))} <i class="fact-flecha">${abiertos.has(p.id) ? "▾" : "▸"}</i></b><small><button type="button" class="fecha-btn" data-fecha="${p.id}" title="Cambiar la fecha">📅 ${fFecha(p.realizado_at)}</button> · ${esc(p.aseguradora || "")} ${esc(p.expediente || "")}</small><small class="fact-dir">📍 ${esc([p.direccion, [p.codigo_postal, p.poblacion].filter(Boolean).join(" "), p.provincia].filter(Boolean).join(", ") || "Sin dirección")}</small>${est}</span>
         <span class="fact-der"><b class="fact-imp ${imp == null ? "sin" : ""}">${imp == null ? "sin importe" : fEuros(imp)}</b><a class="btn peq fact-ver" href="#/parte/${p.id}" data-ver="${p.id}">Ver ›</a>${selectorMesFactura(p)}</span>
         ${abiertos.has(p.id) ? `<div class="fact-lineas">${ls.length ? ls.map((l) => `<div><span><b>${esc(l.codigo || "—")}</b> ${esc(l.descripcion || "")}</span><span>${Number(l.cantidad) || 0}×<span class="precio"> ${fEuros(importeLinea(l))}</span></span></div>`).join("") : `<p class="suave">Sin códigos. ${esc((p.averia || "").slice(0, 140))}</p>`}</div>` : ""}
       </div>`;
@@ -1425,20 +1425,38 @@ function avisoCobertura(p) {
   return `<div class="aviso cobertura-info">🧰 ${t.join("<br>")}</div>`;
 }
 
+// Título de un parte en las listas: el nombre; si no lo hay, la calle, destacada (📍); si tampoco, «Sin nombre».
+const tituloParte = (p) => (p.nombre || "").trim() || ((p.direccion || "").trim() ? "📍 " + p.direccion.trim() : "Sin nombre");
+
+// Importes para la lista, sin entrar al parte: valoración, autorizado y realizado (de los códigos o, si no hay, del importe guardado).
+function importesLista(p) {
+  const de = (ls, imp) => ((ls || []).length ? totalesLineas(ls, 0).base : imp != null ? Number(imp) : null);
+  if (p.cierre) { const f = importeParte(p); return f ? [["A facturar", f]] : []; }
+  const val = de(p.lineas_valoracion, p.importe_valorado), aut = de(p.lineas_autorizadas, p.importe_autorizado), rea = de(p.lineas_realizadas, null);
+  const r = [];
+  if (val != null && aut != null && Math.abs(val - aut) < 0.005) r.push(["Valorado y autorizado", aut]);
+  else { if (val != null) r.push(["Valoración", val]); if (aut != null) r.push(["Autorizado", aut]); }
+  if (rea != null && (aut == null || Math.abs(rea - aut) >= 0.005)) r.push(["Realizado", rea]);
+  return r;
+}
+
 // Vista compacta: una línea por parte (fase, nombre, población, días y cita), para ver muchos de un vistazo
 function filaParte(p) {
+  const imp = verPrecios() ? importeParte(p) : null;
   const e = estadoInfo(p.estado);
   return `
   <article class="parte fila ${S.sel?.has(p.id) ? "elegido" : ""}" data-id="${p.id}" style="--ase:${colorAseg(p.aseguradora)}">
     ${S.sel ? `<span class="sel-marca">${S.sel.has(p.id) ? "☑" : "☐"}</span>` : ""}
     ${S.orden === "fase" ? `<span class="fase-punto" style="--c:${e.color}" title="${e.nombre}"></span>` : `<span class="estado" style="--c:${e.color}">${e.nombre}</span>`}
-    <span class="fila-txt"><b>${esc(p.nombre || "Sin nombre")}</b><small>${p.cierre ? `🏁 ${esc(textoCierre(p.cierre))} · ` : ""}${esc([p.poblacion, p.aseguradora, p.expediente].filter(Boolean).join(" · "))}</small></span>
+    <span class="fila-txt"><b>${esc(tituloParte(p))}</b><small>${p.cierre ? `🏁 ${esc(textoCierre(p.cierre))} · ` : ""}${esc([p.poblacion, p.aseguradora, p.expediente].filter(Boolean).join(" · "))}</small></span>
     ${p.fecha_cita && p.estado === "contactado" ? `<small class="fila-cita">📅 ${new Date(p.fecha_cita).toLocaleString("es-ES", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" })}</small>` : ""}
+    ${imp != null ? `<small class="fila-imp precio">${fEuros(imp)}</small>` : ""}
     ${chipDias(p)}
   </article>`;
 }
 
 function tarjetaParte(p) {
+  const imps = verPrecios() ? importesLista(p) : [];
   const e = estadoInfo(p.estado);
   const asignado = USAR_ASIGNADO ? S.miembros.find((m) => m.user_id === p.asignado_a)?.nombre : null;
   return `
@@ -1455,10 +1473,10 @@ function tarjetaParte(p) {
       ${chipDias(p)}
       <span class="estado" style="--c:${e.color}">${e.nombre}</span>
     </div>
-    <div class="parte-nombre">${esc(p.nombre || "Sin nombre")}</div>
-    <div class="parte-dir">${esc([p.direccion, p.poblacion].filter(Boolean).join(", "))}${zonaDe(p) ? ` <span class="zona">${esc(zonaDe(p))}</span>` : ""}</div>
+    <div class="parte-nombre">${esc(tituloParte(p))}</div>
+    <div class="parte-dir">${esc([p.nombre ? p.direccion : "", p.poblacion].filter(Boolean).join(", "))}${zonaDe(p) ? ` <span class="zona">${esc(zonaDe(p))}</span>` : ""}</div>
     ${p.averia ? `<div class="parte-averia">${esc(p.averia)}</div>` : ""}
-    ${p.importe_valorado != null && verPrecios() ? `<div class="parte-importe">Valoración: <b>${fEuros(p.importe_valorado)}</b>${p.importe_autorizado != null ? ` · Autorizado: <b>${fEuros(p.importe_autorizado)}</b>` : ""}</div>` : ""}
+    ${imps.length ? `<div class="parte-importe">${imps.map(([t, v]) => `${t}: <b>${fEuros(v)}</b>`).join(" · ")}</div>` : ""}
     <div class="parte-pie">
       <span>${p.fecha_cita && ["contactado"].includes(p.estado) ? `📅 Cita ${fFechaHora(p.fecha_cita)}` : hace(p.updated_at)}${asignado ? " · " + esc(asignado) : ""}</span>
       <span class="parte-acc">
@@ -1674,7 +1692,7 @@ function elegirParteParaFotos(imgs) {
     const lista = (S.partes || []).filter((p) => !q || sin([p.nombre, p.expediente, p.direccion, p.poblacion, p.aseguradora].join(" ")).includes(q)).slice(0, 30);
     $("#lParte", s).innerHTML = lista.length ? lista.map((p) => `
       <button class="btn fila-elegir" data-id="${p.id}">
-        <b>${esc(p.nombre || "Sin nombre")}</b>
+        <b>${esc(tituloParte(p))}</b>
         <small>${esc(p.aseguradora || "")}${p.expediente ? " · " + esc(p.expediente) : ""}${p.direccion ? " · " + esc(p.direccion) : ""}</small>
       </button>`).join("") : '<p class="vacio">No hay partes que coincidan.</p>';
   };
@@ -2387,7 +2405,7 @@ async function vistaParte(id) {
     <br>${original ? `<a href="#/parte/${original.id}">Ver el parte anterior (${esc(original.estado ? estadoInfo(original.estado).nombre : "")}, ${fFecha(original.created_at)})</a>` : "El parte anterior ya no está en la lista (puede estar en la papelera)."}</div>` : ""}
   ${repetidos.length ? `<div class="aviso repetido-info">🔁 Este parte tiene ${repetidos.length === 1 ? "un repetido posterior" : repetidos.length + " repetidos posteriores"}: ${repetidos.map((x) => `<a href="#/parte/${x.id}">${fFecha(x.created_at)}${x.num_encargo ? " · enc. " + esc(x.num_encargo) : ""}</a>`).join(" · ")}</div>` : ""}
   <section class="cabecera">
-    <div class="nombre">${esc(p.nombre || "Sin nombre")}</div>
+    <div class="nombre">${esc(tituloParte(p))}</div>
     ${dirCompleta ? `<a class="dir" href="${linkMapa(p)}" target="_blank" rel="noopener">${esc(dirCompleta)}</a>` : ""}
     ${p.telefono ? `<div class="tel-txt">${esc(p.telefono)}${p.telefono2 ? " · " + esc(p.telefono2) : ""}</div>` : ""}
     <div class="acciones">
@@ -2954,7 +2972,7 @@ async function vistaPapelera() {
   <main class="lista">${lista.length ? lista.map((p) => `
     <article class="parte papel" style="--ase:${colorAseg(p.aseguradora)}">
       <div class="parte-top"><span class="aseg">${esc(p.aseguradora)}</span><span class="exp">${esc(p.expediente || "")}</span><small class="suave">borrado ${hace(p.borrado_at)}</small></div>
-      <div class="parte-nombre">${esc(p.nombre || "Sin nombre")}</div>
+      <div class="parte-nombre">${esc(tituloParte(p))}</div>
       <div class="lista-botones dos">
         <button class="btn" data-r="${p.id}">↩ Recuperar</button>
         ${S.yo?.es_admin ? `<button class="btn peligro" data-b="${p.id}">Borrar para siempre</button>` : ""}
