@@ -3166,9 +3166,8 @@ async function sheetCierre(p) {
   const c = p.cierre || {};
   const deTarifa = (cod, def) => ({ ...def, ...((S.tarifa || []).find((t) => t.codigo === cod) || {}) });
   const hora = deTarifa("HORA", { codigo: "HORA", descripcion: "Hora de mano de obra o visita sin actuación final", precio: 21 });
-  // La visita del fin de servicio es la «visita sin actuación final» (la más económica de la tarifa), no la 500 (46,63 €).
-  const vs = (S.tarifa || []).filter((t) => /visita/i.test(t.descripcion || "") && t.codigo !== "500" && Number(t.precio) > 0).sort((a, b) => Number(a.precio) - Number(b.precio))[0];
-  const visita = vs ? { codigo: vs.codigo, descripcion: vs.descripcion, precio: vs.precio } : { codigo: hora.codigo, descripcion: hora.descripcion, precio: hora.precio };
+  // La visita del fin de servicio es la 5187, «visita sin actuación final» (no la 500 de 46,63 €).
+  const visita = deTarifa("5187", { codigo: "5187", descripcion: "Visita sin actuación final", precio: 21 });
   if (visita.codigo === hora.codigo) visita.descripcion = "Visita sin actuación final";   // misma línea de tarifa que las horas: se distingue por el texto
   const ant = c.facturar ? p.lineas_realizadas || [] : [];
   const lVisita = ant.find((l) => l.codigo === "500" || (l.codigo === visita.codigo && (visita.codigo !== hora.codigo || l.descripcion === visita.descripcion)));
