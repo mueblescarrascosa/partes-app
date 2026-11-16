@@ -516,3 +516,15 @@ html, body { max-width: 100%; overflow-x: clip; }
 .filtros select { font-size: 16px; }
 /* Las etiquetas de la barra de pasos no se parten a mitad de palabra («Contactad/o»). */
 .paso span { overflow-wrap: normal; word-break: keep-all; letter-spacing: -.01em; }
+/* v2.22.5: la tarjeta del parte nunca más ancha que la pantalla. La lista es una rejilla: su columna se ajusta al
+   ancho (antes crecía hasta la línea más larga) y la fila de arriba (aseguradora, expediente, etiquetas, días,
+   estado) baja a otra línea si no cabe, así los botones de la derecha (✓, WhatsApp, llamar) siempre se ven. */
+.lista { grid-template-columns: minmax(0, 1fr); }
+.parte { min-width: 0; }
+.parte-top { flex-wrap: wrap; row-gap: 4px; }
+.parte-top .exp { min-width: 60px; }
+.parte-pie > span:first-child { min-width: 0; }
+.parte-acc { flex: none; }
+.parte.fila .fila-txt { min-width: 0; flex: 1 1 auto; }
+.parte.fila .fila-txt b, .parte.fila .fila-txt small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (min-width: 1000px) { .lista { grid-template-columns: repeat(auto-fill, minmax(440px, 1fr)); } }
