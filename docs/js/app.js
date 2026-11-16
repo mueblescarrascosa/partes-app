@@ -3165,11 +3165,15 @@ async function sheetCierre(p) {
   await cargarTarifa();
   const c = p.cierre || {};
   const deTarifa = (cod, def) => ({ ...def, ...((S.tarifa || []).find((t) => t.codigo === cod) || {}) });
-  const visita = deTarifa("500", { codigo: "500", descripcion: "Intervención mínima, visita al riesgo sin realizar reparación", precio: 46.63 });
   const hora = deTarifa("HORA", { codigo: "HORA", descripcion: "Hora de mano de obra o visita sin actuación final", precio: 21 });
+  // La visita del fin de servicio es la «visita sin actuación final» (la más económica de la tarifa), no la 500 (46,63 €).
+  const vs = (S.tarifa || []).filter((t) => /visita/i.test(t.descripcion || "") && t.codigo !== "500" && Number(t.precio) > 0).sort((a, b) => Number(a.precio) - Number(b.precio))[0];
+  const visita = vs ? { codigo: vs.codigo, descripcion: vs.descripcion, precio: vs.precio } : { codigo: hora.codigo, descripcion: hora.descripcion, precio: hora.precio };
+  if (visita.codigo === hora.codigo) visita.descripcion = "Visita sin actuación final";   // misma línea de tarifa que las horas: se distingue por el texto
   const ant = c.facturar ? p.lineas_realizadas || [] : [];
-  const tiene = (cod) => ant.find((l) => l.codigo === cod);
-  const otra = ant.find((l) => l.codigo !== visita.codigo && l.codigo !== hora.codigo);
+  const lVisita = ant.find((l) => l.codigo === "500" || (l.codigo === visita.codigo && (visita.codigo !== hora.codigo || l.descripcion === visita.descripcion)));
+  const lHora = ant.find((l) => l.codigo === hora.codigo && l !== lVisita);
+  const otra = ant.find((l) => l !== lVisita && l !== lHora && l.codigo !== visita.codigo && l.codigo !== hora.codigo);
   const motivo0 = c.motivo || "rechazado";
   const s = abrirSheet(`
     <h2>🏁 Fin de servicio</h2>
@@ -3180,9 +3184,9 @@ async function sheetCierre(p) {
       <label id="lMotivo" ${motivo0 === "otro" ? "" : "hidden"}>¿Cuál?<input name="motivo_txt" value="${esc(c.motivo_txt || "")}" placeholder="Ej.: lo arregla otro gremio"></label>
       <label>Nota (opcional)<textarea name="nota" rows="2" placeholder="Ej.: no quiere obras ahora; la compañía le paga la indemnización y lo arregla él">${esc(c.nota || "")}</textarea></label>
       <b>¿Se factura algo?</b>
-      <label class="check"><input type="checkbox" name="f_visita" ${tiene(visita.codigo) || !p.cierre ? "checked" : ""}> La visita <small class="suave">(${esc(visita.codigo)}<span class="precio"> · ${fEuros(visita.precio)}</span>)</small></label>
-      <label class="check"><input type="checkbox" name="f_horas" ${tiene(hora.codigo) ? "checked" : ""}> Horas de trabajo <small class="suave">(${esc(hora.codigo)}<span class="precio"> · ${fEuros(hora.precio)}/h</span>)</small></label>
-      <label id="lHoras" ${tiene(hora.codigo) ? "" : "hidden"}>¿Cuántas horas?<input type="number" name="horas" step="0.5" min="0.5" inputmode="decimal" value="${tiene(hora.codigo)?.cantidad || 1}"></label>
+      <label class="check"><input type="checkbox" name="f_visita" ${lVisita || !p.cierre ? "checked" : ""}> La visita <small class="suave">(${esc(visita.codigo)}<span class="precio"> · ${fEuros(visita.precio)}</span>)</small></label>
+      <label class="check"><input type="checkbox" name="f_horas" ${lHora ? "checked" : ""}> Horas de trabajo <small class="suave">(${esc(hora.codigo)}<span class="precio"> · ${fEuros(hora.precio)}/h</span>)</small></label>
+      <label id="lHoras" ${lHora ? "" : "hidden"}>¿Cuántas horas?<input type="number" name="horas" step="0.5" min="0.5" inputmode="decimal" value="${lHora?.cantidad || 1}"></label>
       <label class="check"><input type="checkbox" name="f_otro" ${otra ? "checked" : ""}> Otra cosa</label>
       <div id="dOtro" ${otra ? "" : "hidden"}><label>Concepto<input name="otro_desc" value="${esc(otra?.descripcion || "")}" placeholder="Ej.: desplazamiento, informe…"></label>
         <label class="precio">Importe (€, sin IVA)<input type="number" step="0.01" inputmode="decimal" name="otro_precio" value="${otra?.precio ?? ""}"></label></div>
