@@ -341,7 +341,7 @@ async function vistaLista() {
   <div class="chips" id="chips"></div>
   <div class="chips zonas" id="chipsZona"></div>
   <div class="filtros">
-    <select id="fAseg"><option value="">Todas las aseguradoras</option>${[...new Set(S.partes.map((p) => p.aseguradora).concat(CFG.ASEGURADORAS))].filter((a) => a && a !== "Otra").map((a) => `<option ${a === S.filtroAseg ? "selected" : ""}>${esc(a)}</option>`).join("")}</select>
+    <select id="fAseg" aria-label="Aseguradora"><option value="">Aseguradoras</option>${[...new Set(S.partes.map((p) => p.aseguradora).concat(CFG.ASEGURADORAS))].filter((a) => a && a !== "Otra").map((a) => `<option ${a === S.filtroAseg ? "selected" : ""}>${esc(a)}</option>`).join("")}</select>
     <select id="orden">
       ${[["fase", "Por fase"], ["recientes", "Últimos movidos"], ["antiguos", "Más días primero"], ["cita", "Próxima cita"], ["nuevos", "Últimos entrados"]].map(([v, t]) => `<option value="${v}" ${S.orden === v ? "selected" : ""}>${t}</option>`).join("")}
     </select>
@@ -2393,7 +2393,7 @@ async function vistaParte(id) {
   app.innerHTML = `
   <header class="barra" style="--ase:${colorAseg(p.aseguradora)}">
     <button class="icono" id="volver" aria-label="Volver">${I.back}</button>
-    <h1><span class="aseg">${esc(p.aseguradora)}</span> ${esc(p.expediente || "")}</h1>
+    <h1 class="h1-exp"><span class="aseg">${esc(p.aseguradora)}</span> ${esc(p.expediente || "")}</h1>
     ${esLector() ? "<span></span>" : `<button class="icono" id="menuParte" aria-label="Más opciones">${I.more}</button>`}
   </header>
   ${navPartes(p.id)}

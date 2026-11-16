@@ -528,3 +528,19 @@ html, body { max-width: 100%; overflow-x: clip; }
 .parte.fila .fila-txt { min-width: 0; flex: 1 1 auto; }
 .parte.fila .fila-txt b, .parte.fila .fila-txt small { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 @media (min-width: 1000px) { .lista { grid-template-columns: repeat(auto-fill, minmax(440px, 1fr)); } }
+
+/* ---------- v2.23.0: revisión en el móvil ---------- */
+/* Filtros: los dos desplegables enteros en una fila y los botones debajo, a la derecha (en el móvil se cortaba el texto) */
+@media (max-width: 999px) {
+  .filtros { flex-wrap: wrap; }
+  .filtros select { flex: 1 1 calc(50% - 3px); }
+  .filtros .icono-txt:first-of-type { margin-left: auto; }
+}
+/* El expediente de la ficha se ve entero (antes se cortaban los últimos números) */
+.barra h1.h1-exp { font-size: 16px; white-space: normal; overflow-wrap: anywhere; line-height: 1.2; }
+/* Zonas táctiles más cómodas: chips de fase y zona, y enlaces de teléfono/WhatsApp/correo de los datos */
+.chip { min-height: 38px; }
+.chips.zonas .chip { min-height: 36px; }
+.datos .dato a { display: inline-block; padding: 6px 0; }
+/* Formularios a dos columnas: los campos quedan alineados aunque una etiqueta ocupe dos líneas */
+.dos { align-items: end; }
