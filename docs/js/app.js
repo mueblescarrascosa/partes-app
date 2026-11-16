@@ -3253,8 +3253,7 @@ function textoInforme(p, conPrecios) {
   const lineas = cie ? (cie.facturar ? p.lineas_realizadas || [] : []) : final && (p.lineas_realizadas || []).length ? p.lineas_realizadas : p.lineas_valoracion || [];
   const ev = p.eventos || [];
   const fechaDe = (estado) => [...ev].reverse().find((e) => e.estado === estado)?.created_at;
-  const notas = ev.filter((e) => e.nota && ["visitado", "valorado", "realizado", null].includes(e.estado ?? null) && !/^(Parte recibido de nuevo|Ha llegado otro parte|Preparado mensaje|Fin de servicio:|Reabierto:)/.test(e.nota))
-    .slice(-3).map((e) => "- " + e.nota.trim());
+  // Sin observaciones: las notas del historial son internas (como en el PDF). Solo lo justo para tramitar.
   const L = [];
   const cx = esConexion(p);
   if (cx) {
@@ -3272,7 +3271,6 @@ function textoInforme(p, conPrecios) {
   if (fv) L.push(`Visita: ${fFecha(fv)}`);
   if (final && fr) L.push(`${cie ? "Cerrado" : "Terminado"}: ${fFecha(fr)}`);
   if (cie) { L.push(`Motivo: ${motivoCierre(cie).nombre}${cie.motivo_txt ? ` (${cie.motivo_txt})` : ""}`); if (cie.nota) L.push(cie.nota); if (!cie.facturar) L.push("No se factura nada."); }
-  if (notas.length && !cx) { L.push(""); L.push("*Observaciones:*"); L.push(...notas); }
   if (lineas.length) {
     L.push(""); L.push(`*${cie ? "Se factura" : final && (p.lineas_realizadas || []).length ? "Trabajos realizados" : (cx ? "Presupuesto" : "Valoración")}:*`);
     for (const l of lineas) {
