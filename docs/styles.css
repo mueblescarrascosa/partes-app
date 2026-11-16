@@ -506,3 +506,13 @@ body.con-sel .tabbar { display: none; }
   border-radius: 12px; background: var(--bg); color: var(--text); font: inherit; font-size: 20px; text-decoration: none; cursor: pointer; text-align: center; }
 .acc-grid span { font-size: 12px; font-weight: 600; line-height: 1.15; }
 @media (max-width: 360px) { .acc-grid { grid-template-columns: repeat(3, 1fr); } }
+
+/* v2.22.4: en el móvil la página no puede ser más ancha que la pantalla. Un texto largo sin espacios (un enlace,
+   un expediente, una dirección) estiraba la tarjeta y toda la página, y se veía ampliada. Ahora se parte donde haga
+   falta, y lo que aun así sobresalga se recorta sin cambiar el ancho de la página. */
+html, body { max-width: 100%; overflow-x: clip; }
+#app, .sheet { overflow-wrap: anywhere; }
+/* En el iPhone, tocar un campo con letra de menos de 16 px amplía la página: los desplegables de filtros, a 16. */
+.filtros select { font-size: 16px; }
+/* Las etiquetas de la barra de pasos no se parten a mitad de palabra («Contactad/o»). */
+.paso span { overflow-wrap: normal; word-break: keep-all; letter-spacing: -.01em; }
